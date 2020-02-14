@@ -37,7 +37,6 @@ if (os.path.isfile(args.output_name)):
 ######### make sure these match the settings file corresponding to the coefficient file
 
 # open up chemical equation data
-#model = pickle.load(open(args.model_f,'rb'))
 model = keras.models.load_model(args.model_f)
 
 # open up raster sets
@@ -49,7 +48,6 @@ max_x = dataset.RasterXSize
 
 
 # create blank output file
-#driver = gdal.GetDriverByName('ENVI') 
 driver = gdal.GetDriverByName('GTiff') 
 driver.Register() 
 
@@ -83,10 +81,8 @@ if args.scaler is not None:
 
 # loop through lines [y]
 for l in tqdm(range(0,max_y),ncols=80):
-#for l in range(0,max_y):
  dat = np.squeeze(dataset.ReadAsArray(0,l,max_x,1)).astype(np.float32)
  dat = dat[np.logical_not(full_bad_bands),...]
- #dat = np.nanmean(np.stack([dat[::3,:], dat[1::3,:], dat[2::3,:]]),axis=0)
  dat = np.transpose(dat)
  if (np.nansum(dat) > 0):
    if (args.bn):

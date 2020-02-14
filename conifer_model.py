@@ -21,6 +21,9 @@ from tqdm import tqdm
 
 import pandas as pd
 
+
+
+# Manage datasets
 needles_set = pd.read_csv('data/extraction_chem_needles.csv')
 noneedles_set = pd.read_csv('data/extraction_chem_noneedles.csv')
 needles_set_ext = pd.read_csv('../extractions/crowns/extra/needles_extension.csv')
@@ -55,15 +58,10 @@ bad_bands_refl[192:205] = True
 bad_bands_refl[284:327] = True
 bad_bands_refl[417:] = True
 refl[:,bad_bands_refl] = np.nan
-#refl = np.nanmean(np.stack([refl[:,::3], refl[:,1::3], refl[:,2::3]]),axis=0)
 refl = refl[:,np.all(np.isnan(refl) == False,axis=0)]
 
 
 good_data = np.ones(len(xy)).astype(bool)
-#good_data[shade == 0] = False 
-#good_data[tch < 3] = False 
-#good_data[site_mask == False] = False
-
 good_data = good_data.flatten()
 
 refl = refl[good_data,...]
@@ -72,27 +70,9 @@ xy = xy[good_data,:]
 
 Y = (conifer == True).reshape(-1,1)
 
-#Y = Y.flatten()
-#reduce_response = np.argmax([np.sum(Y==0),np.sum(Y==1)])
-#good_data = np.zeros(len(Y)).astype(bool)
-#good_data[Y != reduce_response] = True
-#
-#is_rr = np.where(Y == reduce_response)[0]
-#is_rr = is_rr[np.random.permutation(np.sum(Y==reduce_response))[:np.sum(Y!= reduce_response)]]
-#good_data[is_rr] = True
-#
-#refl = refl[good_data,...]
-#conifer = conifer[good_data,...]
-#xy = xy[good_data,:]
-#
-#Y = conifer == True
-#Y = (conifer == True).reshape(-1,1)
-
-
 np.random.seed(13)
 perm = np.random.permutation(Y.shape[0])
 train = np.zeros(perm.shape).astype(bool)
-#train[perm[:int(0.8*train.shape[0])]] = True
 
 n_xstep = 100
 n_ystep = 100
@@ -123,6 +103,8 @@ print('noneedles_weight: {}'.format(noneedles_w/(needles_w+noneedles_w)))
 weights[Y.flatten() == 1] = needles_w / (needles_w+noneedles_w) * 100
 weights[Y.flatten() == 0] = noneedles_w / (needles_w+noneedles_w) * 100
 
+
+# Scale by brightness, and save the scaler
 brightness = np.sqrt(np.mean(np.power(refl,2),axis=-1))
 refl = refl / brightness[:,np.newaxis]
 scaler= preprocessing.StandardScaler()
@@ -131,8 +113,7 @@ refl = scaler.transform(refl)
 joblib.dump(scaler,'trained_models/nn_conifer_scaler')
 
 
-
-
+# Train a random forest - not ultimately used, so commented out, but was checked
 #model = RandomForestClassifier(n_estimators=200, max_depth=5, n_jobs=20, random_state=13)
 #model.fit(refl[train,:],Y[train],weights[train])
 #
@@ -145,8 +126,9 @@ joblib.dump(scaler,'trained_models/nn_conifer_scaler')
 #
 #print('Train CF: {} {}'.format(round(train_cf[0,0],2),round(train_cf[1,1],2)))
 #print('Test CF: {} {}'.format(round(test_cf[0,0],2),round(test_cf[1,1],2)))
-#
-#
+
+
+# Train an SVM - no ultimately used, so commented out, but was checked
 #from sklearn.svm import SVC
 #model = SVC(gamma='auto',kernel='poly',degree=5)
 #model.fit(refl[train,:],Y[train],weights[train])
@@ -162,6 +144,9 @@ joblib.dump(scaler,'trained_models/nn_conifer_scaler')
 #print('Test CF: {} {}'.format(round(test_cf[0,0],2),round(test_cf[1,1],2)))
 
 
+
+# Create NN model structure, and compile.  Ultimate structure desided after pretty
+# extensive (heuristically guided) testing
 inlayer = keras.layers.Input(shape=(refl.shape[1],))
 output_layer = inlayer
 output_layer = Dense(units=400)(output_layer)
@@ -188,15 +173,13 @@ output_layer = Dense(units=2, activation='sigmoid')(output_layer)
 model = keras.models.Model(inputs=[inlayer], outputs=[output_layer])
 model.compile(loss='binary_crossentropy', optimizer='adam')
 
+
+# reformat Y data for crossentropy loss function
 cY = np.hstack([Y,1-Y])
 
 
-#model = keras.models.load_model('trained_models/conifer_nn.h5')
-#pred = model.predict(refl)
-#pred = np.argmin(pred,axis=1) 
-#train_cf = confusion_matrix(Y[train],pred[train])
-#test_cf = confusion_matrix(Y[test],pred[test])
-
+# Run through and train model in 5 epoch steps - basically instituiting a manual stoping criteria because loss is really a function of both TPR and FPRp, and
+# we wanted to select a good combination of both.
 print ('NN Results')
 for e in range(30):
     model.fit(refl[train,...],cY[train,...],epochs=5,sample_weight=weights[train],validation_data=(refl[test,...],cY[test,...], weights[test]),batch_size=1000)
@@ -206,7 +189,6 @@ for e in range(30):
 
     train_cf = confusion_matrix(Y[train],pred[train])
     test_cf = confusion_matrix(Y[test],pred[test])
-    #print('TP,FP,TN,FN:\n{} {} {}'.format(train_cf[0,0],train_cf[0,1],train_cf[1,1],train_cf[1,0]))
     print('TPR,FPRp,TNR:\n{} {} {}'.format(np.round(train_cf[0,0]/np.sum(train_cf[0,:]),3),
                                            np.round(train_cf[0,1]/np.sum(train_cf[1,:]),3),
                                            np.round(train_cf[1,1]/np.sum(train_cf[1,:]),3)))
@@ -216,22 +198,7 @@ for e in range(30):
                                            np.round(test_cf[1,1]/np.sum(test_cf[1,:]),3)))
 
 
-    #print('Train CF:\n{}'.format(train_cf))
-    #print('Test CF:\n{}'.format(test_cf))
-    #train_cf = train_cf / np.sum(train_cf,axis=1)[:,np.newaxis]
-    #test_cf = test_cf / np.sum(test_cf,axis=1)[:,np.newaxis]
-    #print('Train CF: {} {}'.format(round(train_cf[0,0],3),round(train_cf[1,1],3)))
-    #print('Test CF: {} {}'.format(round(test_cf[0,0],3),round(test_cf[1,1],3)))
-    
-
     model.save('trained_models/conifer_nn_set_{}.h5'.format(e))
-
-
-
-
-
-
-
 
 
 
