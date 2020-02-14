@@ -7,7 +7,7 @@ generate foliar trait maps throughout that region.  A full description of the ef
 
 and use of this code should cite that manuscript.
 
-## Additional relevant repositories:
+## All relevant repositories to this project:
 
 ### Atmospheric correction wrapper: 
 https://github.com/pgbrodrick/acorn_atmospheric_correction
@@ -17,6 +17,9 @@ https://github.com/pgbrodrick/shade-ray-trace
 
 ### Data Extraction:
 https://github.com/pgbrodrick/bil_data_extraction
+
+### Conifer Modeling:
+https://github.com/pgbrodrick/conifer_modeling
 
 ### Trait Model Generation:
 https://github.com/kdchadwick/east_river_trait_modeling
