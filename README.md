@@ -9,6 +9,11 @@ A full description of the effort can be found at:
 
 and use of this code should cite that manuscript.
 
+### Conifer map data product is available on GEE: 
+https://code.earthengine.google.com/?asset=users/pgbrodrick/SFA/collections/conifer_priority
+<br>
+<br>
+
 ## All relevant repositories to this project:
 
 ### Atmospheric correction wrapper: 
