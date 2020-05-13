@@ -9,8 +9,13 @@ A full description of the effort can be found at:
 
 and use of this code should cite that manuscript.
 
-### Conifer map data product is available on GEE: 
-https://code.earthengine.google.com/?asset=users/pgbrodrick/SFA/collections/conifer_priority
+### Visualization code in GEE for all products in this project can be found here: 
+https://code.earthengine.google.com/5c96bbc96ffd50e3c8b1433b34a0bb86
+<br>
+
+
+### This data product is available as an asset on GEE: 
+Needle-leaf map: https://code.earthengine.google.com/?asset=users/pgbrodrick/SFA/collections/conifer_priority
 <br>
 <br>
 
