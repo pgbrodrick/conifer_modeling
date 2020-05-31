@@ -15,38 +15,19 @@ mpl.use('Agg')
 
 def main():
     # Manage datasets
-    needles_set = pd.read_csv('data/extraction_chem_needles.csv')
-    noneedles_set = pd.read_csv('data/extraction_chem_noneedles.csv')
-    needles_set_ext = pd.read_csv('../extractions/crowns/extra/needles_extension.csv')
-    noneedles_set_ext = pd.read_csv('../extractions/crowns/extra/noneedles_extension.csv')
+    data_set = pd.read_csv('data/cover_extraction.csv')
 
-    xy = np.vstack([np.array(needles_set[['X_UTM', 'Y_UTM']]),
-                    np.array(noneedles_set[['X_UTM', 'Y_UTM']])])
-    shade = np.vstack([np.array(needles_set['ered_B_1']).reshape(-1, 1),
-                       np.array(noneedles_set['ered_B_1']).reshape(-1, 1)]).flatten()
-    tch = np.vstack([np.array(needles_set['_tch_B_1']).reshape(-1, 1),
-                     np.array(noneedles_set['_tch_B_1']).reshape(-1, 1)]).flatten()
-    refl = np.vstack([np.array(needles_set)[:, -426:],
-                      np.array(noneedles_set)[:, -426:]]).astype(float)
-    conifer = np.zeros(len(xy)).astype(bool)
-    conifer[:len(needles_set)] = True
+    xy = np.array(data_set[['X_UTM', 'Y_UTM']])
+    shade = np.array(data_set['ered_B_1']).flatten()
+    #tch = np.array(data_set['_tch_B_1']).flatten()
+    refl = np.array(data_set)[:, -427:-1].astype(np.float32)
 
-    xy_ext = np.vstack([np.array(needles_set_ext[['X_UTM', 'Y_UTM']]),
-                        np.array(noneedles_set_ext[['X_UTM', 'Y_UTM']])])
-    shade_ext = np.vstack([np.array(needles_set_ext['ered_B_1']).reshape(-1, 1),
-                           np.array(noneedles_set_ext['ered_B_1']).reshape(-1, 1)]).flatten()
-    tch_ext = np.vstack([np.array(needles_set_ext['_tch_B_1']).reshape(-1, 1),
-                         np.array(noneedles_set_ext['_tch_B_1']).reshape(-1, 1)]).flatten()
-    refl_ext = np.vstack([np.array(needles_set_ext)[:, -426:],
-                          np.array(noneedles_set_ext)[:, -426:]]).astype(float)
-    conifer_ext = np.zeros(len(xy_ext)).astype(bool)
-    conifer_ext[:len(needles_set_ext)] = True
+    
+    covertype = np.array(data_set[['covertype']]).flatten()
 
-    xy = np.vstack([xy, xy_ext])
-    refl = np.vstack([refl, refl_ext])
-    shade = np.vstack([shade.reshape(-1, 1), shade_ext.reshape(-1, 1)]).flatten()
-    tch = np.vstack([tch.reshape(-1, 1), tch_ext.reshape(-1, 1)]).flatten()
-    conifer = np.vstack([conifer.reshape(-1, 1), conifer_ext.reshape(-1, 1)])
+
+    aspen = np.zeros(len(xy)).astype(bool)
+    aspen[covertype == 'aspen'] = True
 
     bad_bands_refl = np.zeros(426).astype(bool)
     bad_bands_refl[:8] = True
@@ -60,10 +41,10 @@ def main():
     good_data = good_data.flatten()
 
     refl = refl[good_data, ...]
-    conifer = conifer[good_data, ...]
+    aspen = aspen[good_data, ...]
     xy = xy[good_data, :]
 
-    Y = (conifer == True).reshape(-1, 1)
+    Y = (aspen == True).reshape(-1, 1)
 
     np.random.seed(13)
     perm = np.random.permutation(Y.shape[0])
@@ -102,7 +83,7 @@ def main():
     scaler = preprocessing.StandardScaler()
     scaler.fit(refl[train, :])
     refl = scaler.transform(refl)
-    joblib.dump(scaler, 'trained_models/nn_conifer_scaler')
+    joblib.dump(scaler, 'trained_models/nn_aspen_scaler')
 
     """
     # Train a random forest - not ultimately used, so commented out, but was checked
@@ -186,8 +167,13 @@ def main():
         print('{} {} {}\n'.format(np.round(test_cf[0, 0]/np.sum(test_cf[0, :]), 3),
                                   np.round(test_cf[0, 1]/np.sum(test_cf[1, :]), 3),
                                   np.round(test_cf[1, 1]/np.sum(test_cf[1, :]), 3)))
+        print('Precision, Recall::\n{} {}'.format(np.round(train_cf[0,0]/np.sum(train_cf[:,0]),3),
+                                                  np.round(train_cf[0,0]/np.sum(train_cf[0,:]),3)))
 
-        model.save('trained_models/conifer_nn_set_{}.h5'.format(e))
+        print('{} {}'.format(np.round(test_cf[0,0]/np.sum(test_cf[:,0]),3),
+                             np.round(test_cf[0,0]/np.sum(test_cf[0,:]),3)))
+
+        model.save('trained_models/aspen_nn_set_{}.h5'.format(e))
 
 
 if __name__ == "__main__":
