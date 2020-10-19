@@ -77,69 +77,69 @@ def main():
                 init=''
 
     # Open binary cover file
-    cover_set = gdal.Open(cover_raster_file, gdal.GA_ReadOnly)
-    cover_trans = cover_set.GetGeoTransform()
-    assert cover_set is not None, 'Invalid input file'
-
-    # Get cover coordinates
-    covers = cover_set.ReadAsArray()
-    un_covers = np.unique(covers[covers != -1]).astype(int)
-
-    coord_lists = []
-    num_outputs = 0
-    np.random.seed(13)
-    for cover in un_covers:
-
-        cover_coords = list(np.where(covers == cover))
-        if len(cover_coords[0]) > args.max_samples_per_class:
-            perm = np.random.permutation(len(cover_coords[0]))[:args.max_samples_per_class]
-            cover_coords[0] = cover_coords[0][perm]
-            cover_coords[1] = cover_coords[1][perm]
-
-        coord_lists.append(cover_coords)
-        num_outputs += len(cover_coords[0])
-
-
-    # Read through files and grab relevant data
-    output_array = np.zeros((num_outputs, n_features + 3))
-    output_names = []
-
-    start_index = 0
-    for cover in un_covers:
-
-        cover_coords = coord_lists[cover]
-        for _line in tqdm(range(len(cover_coords[0])), ncols=80):
-
-            output_array[start_index + _line, 0] = covers[cover_coords[0][_line], cover_coords[1][_line]]
-            output_array[start_index + _line, 1] = cover_coords[1][_line]*cover_trans[1]+cover_trans[0]
-            output_array[start_index + _line, 2] = cover_coords[0][_line]*cover_trans[5]+cover_trans[3]
-
-            output_names.append(namelist[cover])
-
-            feat_ind = 3
-            for _f in range(len(file_sets)):
-                line = file_sets[_f].ReadAsArray(
-                    0, int(cover_coords[0][_line]), file_sets[_f].RasterXSize, 1)
-                if (len(line.shape) == 2):
-                    line = np.reshape(line, (1, line.shape[0], line.shape[1]))
-
-                line = np.squeeze(line[..., cover_coords[1][_line]])
-
-                output_array[start_index + _line, feat_ind:feat_ind+file_sets[_f].RasterCount] = line.copy()
-                feat_ind += file_sets[_f].RasterCount
-
-        start_index += len(cover_coords[0])
-
-    output_names = np.array(output_names)
-
-    # Export
-    header = ['ID', 'X_UTM', 'Y_UTM',]
-    for _f in range(len(file_sets)):
-        header.extend([os.path.splitext(os.path.basename(args.source_files[_f]))[0]
-                       [-4:] + '_B_' + str(n+1) for n in range(file_sets[_f].RasterCount)])
-    out_df = pd.DataFrame(data=output_array, columns=header)
-    out_df['covertype'] = output_names
-    out_df.to_csv(os.path.join(args.out_base,'cover_extraction.csv'),sep=',', index=False)
+    # cover_set = gdal.Open(cover_raster_file, gdal.GA_ReadOnly)
+    # cover_trans = cover_set.GetGeoTransform()
+    # assert cover_set is not None, 'Invalid input file'
+    #
+    # # Get cover coordinates
+    # covers = cover_set.ReadAsArray()
+    # un_covers = np.unique(covers[covers != -1]).astype(int)
+    #
+    # coord_lists = []
+    # num_outputs = 0
+    # np.random.seed(13)
+    # for cover in un_covers:
+    #
+    #     cover_coords = list(np.where(covers == cover))
+    #     if len(cover_coords[0]) > args.max_samples_per_class:
+    #         perm = np.random.permutation(len(cover_coords[0]))[:args.max_samples_per_class]
+    #         cover_coords[0] = cover_coords[0][perm]
+    #         cover_coords[1] = cover_coords[1][perm]
+    #
+    #     coord_lists.append(cover_coords)
+    #     num_outputs += len(cover_coords[0])
+    #
+    #
+    # # Read through files and grab relevant data
+    # output_array = np.zeros((num_outputs, n_features + 3))
+    # output_names = []
+    #
+    # start_index = 0
+    # for cover in un_covers:
+    #
+    #     cover_coords = coord_lists[cover]
+    #     for _line in tqdm(range(len(cover_coords[0])), ncols=80):
+    #
+    #         output_array[start_index + _line, 0] = covers[cover_coords[0][_line], cover_coords[1][_line]]
+    #         output_array[start_index + _line, 1] = cover_coords[1][_line]*cover_trans[1]+cover_trans[0]
+    #         output_array[start_index + _line, 2] = cover_coords[0][_line]*cover_trans[5]+cover_trans[3]
+    #
+    #         output_names.append(namelist[cover])
+    #
+    #         feat_ind = 3
+    #         for _f in range(len(file_sets)):
+    #             line = file_sets[_f].ReadAsArray(
+    #                 0, int(cover_coords[0][_line]), file_sets[_f].RasterXSize, 1)
+    #             if (len(line.shape) == 2):
+    #                 line = np.reshape(line, (1, line.shape[0], line.shape[1]))
+    #
+    #             line = np.squeeze(line[..., cover_coords[1][_line]])
+    #
+    #             output_array[start_index + _line, feat_ind:feat_ind+file_sets[_f].RasterCount] = line.copy()
+    #             feat_ind += file_sets[_f].RasterCount
+    #
+    #     start_index += len(cover_coords[0])
+    #
+    # output_names = np.array(output_names)
+    #
+    # # Export
+    # header = ['ID', 'X_UTM', 'Y_UTM',]
+    # for _f in range(len(file_sets)):
+    #     header.extend([os.path.splitext(os.path.basename(args.source_files[_f]))[0]
+    #                    [-4:] + '_B_' + str(n+1) for n in range(file_sets[_f].RasterCount)])
+    # out_df = pd.DataFrame(data=output_array, columns=header)
+    # out_df['covertype'] = output_names
+    # out_df.to_csv(os.path.join(args.out_base,'cover_extraction.csv'),sep=',', index=False)
 
 
 

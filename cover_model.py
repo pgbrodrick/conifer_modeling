@@ -1,34 +1,54 @@
 
 
+import numpy as np
 import pandas as pd
+import keras
+import matplotlib as mpl
+import matplotlib.pyplot as plt
+
 from tqdm import tqdm
 from sklearn.externals import joblib
 from sklearn import preprocessing
 from sklearn.metrics import confusion_matrix
 from keras.layers import BatchNormalization, Conv2D, Dense, Flatten, MaxPooling2D, Concatenate, SeparableConv2D, Dropout
-import keras
-import numpy as np
 
-import matplotlib as mpl
-mpl.use('Agg')
+
+
+#mpl.use('Agg')
 
 
 def main():
-    # Manage datasets
-    data_set = pd.read_csv('data/cover_extraction.csv')
 
+    layers_range=[2, 4]
+    node_range = [5, 10]
+    dropout_range = [0, 4]
+    refl, Y, test, train, weights = manage_datasets('~/Google Drive File Stream/My Drive/CB_share/NEON/cover_classification/extraction_output/cover_extraction.csv')
+    #preds, dim_names = nn_scenario_test(refl, Y, weights, test, train, n_epochs=2, its=10, layers_range=layers_range,
+    #                                    node_range=node_range, dropout_range=dropout_range)
+    plotting_model_fits(Y, layers_range, node_range, dropout_range)
+
+
+def manage_datasets(import_data, category='aspen', weighting=False):
+    # Import extraction csv
+    data_set = pd.read_csv(import_data)
+
+    # extract x y coordinates for each pixel
     xy = np.array(data_set[['X_UTM', 'Y_UTM']])
-    shade = np.array(data_set['ered_B_1']).flatten()
+    #shade = np.array(data_set['ered_B_1']).flatten()
     #tch = np.array(data_set['_tch_B_1']).flatten()
+
+    # extract reflectance data from csv
     refl = np.array(data_set)[:, -427:-1].astype(np.float32)
 
-    
+    # Extract cover type data
     covertype = np.array(data_set[['covertype']]).flatten()
+    print(np.unique(covertype))
 
-
+    # Identifying aspen in boolian vector format
     aspen = np.zeros(len(xy)).astype(bool)
-    aspen[covertype == 'aspen'] = True
+    aspen[covertype == category] = True
 
+    # Managing bad bands
     bad_bands_refl = np.zeros(426).astype(bool)
     bad_bands_refl[:8] = True
     bad_bands_refl[192:205] = True
@@ -38,6 +58,7 @@ def main():
     refl = refl[:, np.all(np.isnan(refl) == False, axis=0)]
 
     good_data = np.ones(len(xy)).astype(bool)
+    #good_data[shade == 0] = False
     good_data = good_data.flatten()
 
     refl = refl[good_data, ...]
@@ -66,114 +87,115 @@ def main():
                 train[valid] = True
 
     test = np.logical_not(train)
-    print((np.sum(train) / float(len(train))))
-    print((np.sum(test) / float(len(train))))
+    print('Fraction Training Data: {}'.format((np.sum(train) / float(len(train)))))
+    print('Fraction Testing Data: {}'.format((np.sum(test) / float(len(train)))))
 
+    #initialize weights vector and set to one for use in case where weighting == False
     weights = np.zeros(Y.shape[0])
-    needles_w = float(len(Y[train]))/float(np.sum(Y == 1))**0.8
-    noneedles_w = float(len(Y[train]))/float(np.sum(Y == 0))**0.8
-    print('needles_weight: {}'.format(needles_w/(needles_w+noneedles_w)))
-    print('noneedles_weight: {}'.format(noneedles_w/(needles_w+noneedles_w)))
-    weights[Y.flatten() == 1] = needles_w / (needles_w+noneedles_w) * 100
-    weights[Y.flatten() == 0] = noneedles_w / (needles_w+noneedles_w) * 100
+    weights[:] = 1
 
-    # Scale by brightness, and save the scaler
+    # If weighting is needed or desired, adapt code here
+    if weighting == True:
+        weights = np.zeros(Y.shape[0])
+        needles_w = float(len(Y[train]))/float(np.sum(Y == 1))**0.8
+        noneedles_w = float(len(Y[train]))/float(np.sum(Y == 0))**0.8
+        print('needles_weight: {}'.format(needles_w/(needles_w+noneedles_w)))
+        print('noneedles_weight: {}'.format(noneedles_w/(needles_w+noneedles_w)))
+        weights[Y.flatten() == 1] = needles_w / (needles_w+noneedles_w) * 100
+        weights[Y.flatten() == 0] = noneedles_w / (needles_w+noneedles_w) * 100
+
+    # brightness normalize
     brightness = np.sqrt(np.mean(np.power(refl, 2), axis=-1))
     refl = refl / brightness[:, np.newaxis]
+
+    # Scale brightness normalized reflectance data and save scaling information
     scaler = preprocessing.StandardScaler()
     scaler.fit(refl[train, :])
     refl = scaler.transform(refl)
-    joblib.dump(scaler, 'trained_models/nn_aspen_scaler')
+    joblib.dump(scaler, 'output/trained_models/nn_aspen_scaler')
 
-    """
-    # Train a random forest - not ultimately used, so commented out, but was checked
-    model = RandomForestClassifier(n_estimators=200, max_depth=5, n_jobs=20, random_state=13)
-    model.fit(refl[train,:],Y[train],weights[train])
-    
-    print ('RF Results')
-    pred = model.predict(refl).reshape(-1,1)
-    train_cf = confusion_matrix(Y[train],pred[train])
-    test_cf = confusion_matrix(Y[test],pred[test])
-    train_cf = train_cf / np.sum(train_cf,axis=1)[:,np.newaxis]
-    test_cf = test_cf / np.sum(test_cf,axis=1)[:,np.newaxis]
-    
-    print('Train CF: {} {}'.format(round(train_cf[0,0],2),round(train_cf[1,1],2)))
-    print('Test CF: {} {}'.format(round(test_cf[0,0],2),round(test_cf[1,1],2)))
-    
-    
-    # Train an SVM - no ultimately used, so commented out, but was checked
-    from sklearn.svm import SVC
-    model = SVC(gamma='auto',kernel='poly',degree=5)
-    model.fit(refl[train,:],Y[train],weights[train])
-    
-    print ('SVM Results')
-    pred = model.predict(refl).reshape(-1,1)
-    train_cf = confusion_matrix(Y[train],pred[train])
-    test_cf = confusion_matrix(Y[test],pred[test])
-    train_cf = train_cf / np.sum(train_cf,axis=1)[:,np.newaxis]
-    test_cf = test_cf / np.sum(test_cf,axis=1)[:,np.newaxis]
-    
-    print('Train CF: {} {}'.format(round(train_cf[0,0],2),round(train_cf[1,1],2)))
-    print('Test CF: {} {}'.format(round(test_cf[0,0],2),round(test_cf[1,1],2)))
-    """
+    # Return outputs of function
+    return refl, Y, test, train, weights
+
+
 
     # Create NN model structure, and compile.  Ultimate structure desided after pretty
     # extensive (heuristically guided) testing
+
+
+def nn_model(refl, num_layers, num_nodes, classes, dropout, loss_function, output_activation):
     inlayer = keras.layers.Input(shape=(refl.shape[1],))
     output_layer = inlayer
-    output_layer = Dense(units=400)(output_layer)
-    output_layer = keras.layers.LeakyReLU(alpha=0.3)(output_layer)
-    output_layer = Dropout(0.4)(output_layer)
-    output_layer = BatchNormalization()(output_layer)
 
-    output_layer = Dense(units=400)(output_layer)
-    output_layer = keras.layers.LeakyReLU(alpha=0.3)(output_layer)
-    output_layer = Dropout(0.4)(output_layer)
-    output_layer = BatchNormalization()(output_layer)
+  # defining internal layer structure
+    for n in range(num_layers):
+        output_layer = Dense(units=num_nodes)(output_layer)
 
-    output_layer = Dense(units=400)(output_layer)
-    output_layer = keras.layers.LeakyReLU(alpha=0.3)(output_layer)
-    output_layer = Dropout(0.4)(output_layer)
-    output_layer = BatchNormalization()(output_layer)
+        # Activation: makes it non-linear, remove line for nested linear models. many options here.
+        output_layer = keras.layers.LeakyReLU(alpha=0.3)(output_layer)
 
-    output_layer = Dense(units=400)(output_layer)
-    output_layer = keras.layers.LeakyReLU(alpha=0.3)(output_layer)
-    output_layer = Dropout(0.4)(output_layer)
-    output_layer = BatchNormalization()(output_layer)
+        #Regularization term: Removes nodes that are underutilized - more likely to need adjustment than leaky
+        output_layer = Dropout(dropout)(output_layer)
 
-    output_layer = Dense(units=2, activation='sigmoid')(output_layer)
+        #Normalization: amplifys signal by normalizing finite differences to look larger. consider turning this off
+        output_layer = BatchNormalization()(output_layer)
+
+    # Activation for output layer defined here: sigmoid forces the results to look more binary. Could also be linear.
+    output_layer = Dense(units=classes, activation=output_activation)(output_layer)
+
+    # Initializing the model structure
     model = keras.models.Model(inputs=[inlayer], outputs=[output_layer])
-    model.compile(loss='binary_crossentropy', optimizer='adam')
 
+  # Optimization function and loss functions defined here - leave as is for now
+    model.compile(loss=loss_function, optimizer='adam') # change loss function to categorical_crossentropy
+
+    return model
+
+
+def nn_scenario_test(refl, Y, weights, test, train, layers_range=[4], node_range=[400], classes=2, dropout_range=[0.4],
+                     loss_function='binary_crossentropy', output_activation='sigmoid', n_epochs=5, its=20):
     # reformat Y data for crossentropy loss function
     cY = np.hstack([Y, 1-Y])
 
-    # Run through and train model in 5 epoch steps - basically instituiting a manual stoping criteria because loss is really a function of both TPR and FPRp, and
-    # we wanted to select a good combination of both.
-    print('NN Results')
-    for e in range(30):
-        model.fit(refl[train, ...], cY[train, ...], epochs=5, sample_weight=weights[train],
-                  validation_data=(refl[test, ...], cY[test, ...], weights[test]), batch_size=1000)
+    predictions = np.zeros((len(layers_range), len(dropout_range), len(node_range), len(range(its)), len(Y))).astype(np.float32)
+    dim_names = ['layers', 'dropout', 'node', 'iteration']
 
-        pred = model.predict(refl)
-        pred = np.argmin(pred, axis=1)
+    # Run through and train model in 5 epoch steps - basically instituting a manual stopping criteria
+    # because loss is really a function of both TPR and FPRp, and we wanted to select a good combination of both.
+    for _nl, nl in enumerate(layers_range):
 
-        train_cf = confusion_matrix(Y[train], pred[train])
-        test_cf = confusion_matrix(Y[test], pred[test])
-        print('TPR,FPRp,TNR:\n{} {} {}'.format(np.round(train_cf[0, 0]/np.sum(train_cf[0, :]), 3),
-                                               np.round(train_cf[0, 1]/np.sum(train_cf[1, :]), 3),
-                                               np.round(train_cf[1, 1]/np.sum(train_cf[1, :]), 3)))
+        for _dr, dr in enumerate(dropout_range):
 
-        print('{} {} {}\n'.format(np.round(test_cf[0, 0]/np.sum(test_cf[0, :]), 3),
-                                  np.round(test_cf[0, 1]/np.sum(test_cf[1, :]), 3),
-                                  np.round(test_cf[1, 1]/np.sum(test_cf[1, :]), 3)))
-        print('Precision, Recall::\n{} {}'.format(np.round(train_cf[0,0]/np.sum(train_cf[:,0]),3),
-                                                  np.round(train_cf[0,0]/np.sum(train_cf[0,:]),3)))
+            for _nn, nn in enumerate(node_range):
+                model = nn_model(refl, nl, nn, classes, dr, loss_function, output_activation)
 
-        print('{} {}'.format(np.round(test_cf[0,0]/np.sum(test_cf[:,0]),3),
-                             np.round(test_cf[0,0]/np.sum(test_cf[0,:]),3)))
+                for _i in range(its):
+                    print('layers {}, nodes {}, dropout {}, iteration {}'.format(nl, nn, dr, _i))
+                    # weights - this is to even out the importance of small classes -
+                    # needs to be updated for categorical rather than binary
+                    model.fit(refl[train, ...], cY[train, ...], epochs=n_epochs, sample_weight=weights[train],
+                              validation_data=(refl[test, ...], cY[test, ...], weights[test]),
+                              batch_size=1000)  # can be adjusted if getting memory errors
 
-        model.save('trained_models/aspen_nn_set_{}.h5'.format(e))
+                    pred = model.predict(refl)
+                    pred = 1 - np.argmax(pred, axis=1)
+                    predictions[_nl, _dr, _nn, _i, :] = pred
+
+                    out_name = 'output/test_output.npz'
+                    np.savez(out_name, predictions=predictions, dim_names=dim_names)
+
+    return predictions, dim_names
+
+
+def plotting_model_fits(layers_range, node_range, dropout_range):
+    npzf = np.load('output/test_output.npz')
+    predictions = npzf['predictions']
+    dim_names = npzf['dim_names']
+    print(dim_names)
+
+    these_are_my_predictions = predictions[:, :, node_range.index(10), :]
+    print(these_are_my_predictions.shape)
+
 
 
 if __name__ == "__main__":
