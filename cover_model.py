@@ -5,6 +5,7 @@ import pandas as pd
 import keras
 import matplotlib as mpl
 import matplotlib.pyplot as plt
+import matplotlib.gridspec as gridspec
 
 from tqdm import tqdm
 from sklearn.externals import joblib
@@ -22,10 +23,10 @@ def main():
     layers_range=[2, 4]
     node_range = [5, 10]
     dropout_range = [0, 4]
-    refl, Y, test, train, weights = manage_datasets('~/Google Drive File Stream/My Drive/CB_share/NEON/cover_classification/extraction_output/cover_extraction.csv')
+    refl, Y, test, train, weights, covertype = manage_datasets('~/Google Drive File Stream/My Drive/CB_share/NEON/cover_classification/extraction_output/cover_extraction.csv')
     #preds, dim_names = nn_scenario_test(refl, Y, weights, test, train, n_epochs=2, its=10, layers_range=layers_range,
     #                                    node_range=node_range, dropout_range=dropout_range)
-    plotting_model_fits(Y, layers_range, node_range, dropout_range)
+    plotting_model_fits(Y, test, covertype, layers_range, node_range, dropout_range)
 
 
 def manage_datasets(import_data, category='aspen', weighting=False):
@@ -115,7 +116,7 @@ def manage_datasets(import_data, category='aspen', weighting=False):
     joblib.dump(scaler, 'output/trained_models/nn_aspen_scaler')
 
     # Return outputs of function
-    return refl, Y, test, train, weights
+    return refl, Y, test, train, weights, covertype
 
 
 
@@ -187,13 +188,79 @@ def nn_scenario_test(refl, Y, weights, test, train, layers_range=[4], node_range
     return predictions, dim_names
 
 
-def plotting_model_fits(layers_range, node_range, dropout_range):
+def plotting_model_fits(Y, to_plot, covertype, layers_range, node_range, dropout_range):
     npzf = np.load('output/test_output.npz')
     predictions = npzf['predictions']
     dim_names = npzf['dim_names']
-    print(dim_names)
 
-    these_are_my_predictions = predictions[:, :, node_range.index(10), :]
+    #these_are_my_predictions = predictions[:, :, node_range.index(10), :]
+
+    # Predictions has dimensions: layers, dropout, nodes, iterations, samples
+
+    # To limit the predictions to only those that we want to plot (probably the test set) based on the 'to_plot' variable,
+    # we can take a slice in the samples dimension, as:
+    predictions = predictions[..., to_plot]  # this is the same as predictions[:,:,:,:,to_plot]
+
+    # Do the same thing for the Y (truth) and for the covertype
+    covertype = covertype[to_plot]
+
+    # Now let's calculate the true positives, false_positives, etc.
+    # This is how you'd do it for Y
+    #true_positives  = np.sum(np.logical_and(predictions == Y, Y == 1), axis=-1)
+    #false_positives = np.sum(np.logical_and(predictions != Y, predictions == 1), axis=-1)
+    #true_negatives  = np.sum(np.logical_and(predictions == Y, Y == 0), axis=-1)
+    #false_negatives = np.sum(np.logical_and(predictions != Y, predictions == 0), axis=-1)
+
+    # But to be interesting, let's do it for the covertype
+    un_covertype = np.unique(covertype)
+    for cover in un_covertype:
+        cover_Y = covertype == cover
+        true_positives  = np.sum(np.logical_and(predictions == cover_Y, cover_Y == 1), axis=-1)
+        false_positives = np.sum(np.logical_and(predictions != cover_Y, predictions == 1), axis=-1)
+        true_negatives  = np.sum(np.logical_and(predictions == cover_Y, cover_Y == 0), axis=-1)
+        false_negatives = np.sum(np.logical_and(predictions != cover_Y, predictions == 0), axis=-1)
+        # Dimensions of the above sums are: layers, dropout, nodes, iterations
+
+        # And some bulk numbers about the particular cover type
+        num_cover = np.sum(cover_Y)
+        num_not_cover = np.sum(np.logical_not(cover_Y))
+
+        # Now lets make some aggregate plots
+        axis_names = ['Layers','Dropout','Nodes']
+        axis_legends = [layers_range, node_range, dropout_range]
+        gs = gridspec.GridSpec(ncols=len(axis_names), nrows=2, wspace=0.1, hspace=0.4)
+        fig = plt.figure(figsize=(4*len(axis_names)*1.1, 4))
+
+        for _ax, axname in enumerate(axis_names):
+
+            sumaxis = [0,1,2]
+            sumaxis.pop(_ax)
+            # Do layers TPR (axis 0)
+            ax = fig.add_subplot(gs[0,_ax])
+            plt.plot(np.transpose(np.mean(true_positives / num_cover, axis=sumaxis)))
+            plt.xlabel('Iteration')
+            plt.ylabel('True Positive Rate')
+            plt.title(axname)
+            plt.legend(axis_legends[_ax])
+
+            # Do layers FPP (False positives / # true elements)
+            ax = fig.add_subplot(gs[1,_ax])
+            plt.plot(np.transpose(np.mean(true_positives / num_cover, axis=sumaxis)))
+            plt.xlabel('Iteration')
+            plt.ylabel('False Positive Rate Prime')
+            plt.title(axname)
+            plt.legend(axis_legends[_ax])
+
+        plt.savefig(f'figs/aggregate_figs_{cover}.png', dpi=200, bbox_inches='tight')
+
+
+
+
+
+
+    true_positives = predictions[...,to_plot] - Y[np.newaxis,np.newaxis, np.newaxis, to_plot]
+
+
     print(these_are_my_predictions.shape)
 
 
