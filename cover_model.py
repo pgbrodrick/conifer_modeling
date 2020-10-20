@@ -20,7 +20,7 @@ from keras.layers import BatchNormalization, Conv2D, Dense, Flatten, MaxPooling2
 
 def main():
 
-    layers_range=[2, 4]
+    layers_range = [2, 4]
     node_range = [5, 10]
     dropout_range = [0, 4]
     refl, Y, test, train, weights, covertype = manage_datasets('~/Google Drive File Stream/My Drive/CB_share/NEON/cover_classification/extraction_output/cover_extraction.csv')
@@ -119,11 +119,8 @@ def manage_datasets(import_data, category='aspen', weighting=False):
     return refl, Y, test, train, weights, covertype
 
 
-
     # Create NN model structure, and compile.  Ultimate structure desided after pretty
     # extensive (heuristically guided) testing
-
-
 def nn_model(refl, num_layers, num_nodes, classes, dropout, loss_function, output_activation):
     inlayer = keras.layers.Input(shape=(refl.shape[1],))
     output_layer = inlayer
@@ -193,9 +190,7 @@ def plotting_model_fits(Y, to_plot, covertype, layers_range, node_range, dropout
     predictions = npzf['predictions']
     dim_names = npzf['dim_names']
 
-    #these_are_my_predictions = predictions[:, :, node_range.index(10), :]
-
-    # Predictions has dimensions: layers, dropout, nodes, iterations, samples
+    # Predictions has dimensions: layers, dropout, nodes, iterations, predictions
 
     # To limit the predictions to only those that we want to plot (probably the test set) based on the 'to_plot' variable,
     # we can take a slice in the samples dimension, as:
@@ -214,10 +209,21 @@ def plotting_model_fits(Y, to_plot, covertype, layers_range, node_range, dropout
     # But to be interesting, let's do it for the covertype
     un_covertype = np.unique(covertype)
     for cover in un_covertype:
+        # defining the index where covertype is one of the unique covers
         cover_Y = covertype == cover
-        true_positives  = np.sum(np.logical_and(predictions == cover_Y, cover_Y == 1), axis=-1)
+
+        # all these are being done over the entire 5-D array and result in 4-D arrays for each
+
+        # defining where cover is equal to this class and where this class is predicted as aspen.
+        true_positives = np.sum(np.logical_and(predictions == cover_Y, cover_Y == 1), axis=-1)
+
+        # prediction is aspen, actual is not this cover type - only useful for aspen
         false_positives = np.sum(np.logical_and(predictions != cover_Y, predictions == 1), axis=-1)
-        true_negatives  = np.sum(np.logical_and(predictions == cover_Y, cover_Y == 0), axis=-1)
+
+        # prediction is not aspen, cover is this cover type
+        true_negatives = np.sum(np.logical_and(predictions == cover_Y, cover_Y == 0), axis=-1)
+
+        # prediction is not aspen, actual is not this cover type - only meaningful for aspen now
         false_negatives = np.sum(np.logical_and(predictions != cover_Y, predictions == 0), axis=-1)
         # Dimensions of the above sums are: layers, dropout, nodes, iterations
 
@@ -233,11 +239,16 @@ def plotting_model_fits(Y, to_plot, covertype, layers_range, node_range, dropout
 
         for _ax, axname in enumerate(axis_names):
 
+
             sumaxis = [0,1,2]
             sumaxis.pop(_ax)
             # Do layers TPR (axis 0)
             ax = fig.add_subplot(gs[0,_ax])
-            plt.plot(np.transpose(np.mean(true_positives / num_cover, axis=sumaxis)))
+            # averaged across two of the axes - tuple is required instead of list for denoting multiple axes to sum over
+            mean_slice = np.mean(true_positives / num_cover, axis=tuple(sumaxis))
+            # transpose to allow different treatments to be in second axis and iterations in first for plotting
+            # this is because we want the iterations on the x axis
+            plt.plot(np.transpose(mean_slice))
             plt.xlabel('Iteration')
             plt.ylabel('True Positive Rate')
             plt.title(axname)
@@ -245,7 +256,7 @@ def plotting_model_fits(Y, to_plot, covertype, layers_range, node_range, dropout
 
             # Do layers FPP (False positives / # true elements)
             ax = fig.add_subplot(gs[1,_ax])
-            plt.plot(np.transpose(np.mean(true_positives / num_cover, axis=sumaxis)))
+            plt.plot(np.transpose(np.mean(false_positives / num_cover, axis=tuple(sumaxis))))
             plt.xlabel('Iteration')
             plt.ylabel('False Positive Rate Prime')
             plt.title(axname)
@@ -258,10 +269,10 @@ def plotting_model_fits(Y, to_plot, covertype, layers_range, node_range, dropout
 
 
 
-    true_positives = predictions[...,to_plot] - Y[np.newaxis,np.newaxis, np.newaxis, to_plot]
+#    true_positives = predictions[...,to_plot] - Y[np.newaxis,np.newaxis, np.newaxis, to_plot]
 
 
-    print(these_are_my_predictions.shape)
+#    print(these_are_my_predictions.shape)
 
 
 
