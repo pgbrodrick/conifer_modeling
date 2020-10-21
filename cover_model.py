@@ -20,13 +20,18 @@ from keras.layers import BatchNormalization, Conv2D, Dense, Flatten, MaxPooling2
 
 def main():
 
-    layers_range = [2, 4]
-    node_range = [5, 10]
-    dropout_range = [0, 4]
+    layers_range = [2, 4, 6]
+    node_range = [100, 250, 400]
+    dropout_range = [0.2, 0.4]
     refl, Y, test, train, weights, covertype = manage_datasets('~/Google Drive File Stream/My Drive/CB_share/NEON/cover_classification/extraction_output/cover_extraction.csv')
-    #preds, dim_names = nn_scenario_test(refl, Y, weights, test, train, n_epochs=2, its=10, layers_range=layers_range,
+
+    for cover in np.unique(covertype):
+        fraction = np.sum(covertype == cover) / len(covertype)
+        print(f'{cover}: {fraction}')
+    quit()
+    #preds, dim_names = nn_scenario_test(refl, Y, weights, test, train, n_epochs=2, its=100, layers_range=layers_range,
     #                                    node_range=node_range, dropout_range=dropout_range)
-    plotting_model_fits(Y, test, covertype, layers_range, node_range, dropout_range)
+    plotting_model_fits_singleclass(Y, test, covertype, layers_range, node_range, dropout_range)
 
 
 def manage_datasets(import_data, category='aspen', weighting=False):
@@ -179,14 +184,14 @@ def nn_scenario_test(refl, Y, weights, test, train, layers_range=[4], node_range
                     pred = 1 - np.argmax(pred, axis=1)
                     predictions[_nl, _dr, _nn, _i, :] = pred
 
-                    out_name = 'output/test_output.npz'
+                    out_name = 'output/test_1.npz'
                     np.savez(out_name, predictions=predictions, dim_names=dim_names)
 
     return predictions, dim_names
 
 
 def plotting_model_fits(Y, to_plot, covertype, layers_range, node_range, dropout_range):
-    npzf = np.load('output/test_output.npz')
+    npzf = np.load('output/test_1.npz')
     predictions = npzf['predictions']
     dim_names = npzf['dim_names']
 
@@ -264,6 +269,91 @@ def plotting_model_fits(Y, to_plot, covertype, layers_range, node_range, dropout
 
         plt.savefig(f'figs/aggregate_figs_{cover}.png', dpi=200, bbox_inches='tight')
 
+
+def plotting_model_fits_singleclass(Y, to_plot, covertype, layers_range, node_range, dropout_range, matchcover='aspen'):
+    npzf = np.load('output/test_1.npz')
+    predictions = npzf['predictions']
+    dim_names = npzf['dim_names']
+
+    # Predictions has dimensions: layers, dropout, nodes, iterations, predictions
+
+    # To limit the predictions to only those that we want to plot (probably the test set) based on the 'to_plot' variable,
+    # we can take a slice in the samples dimension, as:
+    predictions = predictions[..., to_plot]  # this is the same as predictions[:,:,:,:,to_plot]
+
+    # Do the same thing for the Y (truth) and for the covertype
+    covertype = covertype[to_plot]
+
+    # But to be interesting, let's do it for the covertype
+    un_covertype = np.unique(covertype)
+
+    # Now lets make some aggregate plots
+    axis_names = ['Layers', 'Dropout', 'Nodes']
+    axis_legends = [layers_range, dropout_range, node_range]
+    gs = gridspec.GridSpec(ncols=len(axis_names), nrows=len(un_covertype)+1, wspace=0.1, hspace=0.4)
+    fig = plt.figure(figsize=(4 * len(axis_names)*1.2, 4 * (len(un_covertype)+1)))
+
+    # defining where cover is equal to this class and where this class is predicted as aspen.
+    true_positives = np.sum(np.logical_and(predictions == 1, covertype == matchcover), axis=-1)
+
+    # falsely predicted 0 when this class was matchcover
+    false_negatives = np.sum(np.logical_and(predictions == 0, covertype == matchcover), axis=-1)
+
+
+    for _cover, cover in enumerate(un_covertype):
+
+        # prediction is of class matchcover, actual is of multiple classes.
+        false_positives = np.sum(np.logical_and(covertype == cover, predictions == 1), axis=-1)
+
+        # And some bulk numbers about the particular cover type
+        num_cover = np.sum(covertype == matchcover)
+        num_not_cover = np.sum(covertype != matchcover)
+
+        for _ax, axname in enumerate(axis_names):
+            sumaxis = [0,1,2]
+            sumaxis.pop(_ax)
+
+            if cover == matchcover:
+                # Do TPR
+                ax = fig.add_subplot(gs[0, _ax])
+                # averaged across two of the axes - tuple is required instead of list for denoting multiple axes to sum over
+                mean_slice = np.mean(true_positives / num_cover, axis=tuple(sumaxis))
+                # transpose to allow different treatments to be in second axis and iterations in first for plotting
+                # this is because we want the iterations on the x axis
+                plt.plot(np.transpose(mean_slice))
+                plt.xlabel('Iteration')
+                if _ax == 0:
+                    plt.ylabel('True Positive Rate')
+                plt.title(axname)
+                plt.legend(axis_legends[_ax])
+                plt.ylim([0, 1])
+
+                # Do false negatives
+                ax = fig.add_subplot(gs[1, _ax])
+                # averaged across two of the axes - tuple is required instead of list for denoting multiple axes to sum over
+                mean_slice = np.mean(false_negatives / num_cover, axis=tuple(sumaxis))
+                # transpose to allow different treatments to be in second axis and iterations in first for plotting
+                # this is because we want the iterations on the x axis
+                plt.plot(np.transpose(mean_slice))
+                plt.xlabel('Iteration')
+                if _ax == 0:
+                    plt.ylabel('False negative rate')
+                plt.title(axname)
+                plt.legend(axis_legends[_ax])
+                plt.ylim([0, 1])
+
+            else:
+                # Do per-class false positives
+                ax = fig.add_subplot(gs[1 + _cover,_ax])
+                plt.plot(np.transpose(np.mean(false_positives / num_cover, axis=tuple(sumaxis))))
+                plt.xlabel('Iteration')
+                if _ax == 0:
+                    plt.ylabel(f'Predicted {cover} but actually {matchcover}\n relative to true {matchcover}')
+                plt.title(axname)
+                plt.legend(axis_legends[_ax])
+                plt.ylim([0,1])
+
+    plt.savefig(f'figs/single_class_breakout_1.png', dpi=200, bbox_inches='tight')
 
 
 
