@@ -23,14 +23,10 @@ def main():
     layers_range = [2, 4, 6]
     node_range = [100, 250, 400]
     dropout_range = [0.2, 0.4]
-    refl, Y, test, train, weights, covertype = manage_datasets('~/Google Drive File Stream/My Drive/CB_share/NEON/cover_classification/extraction_output/cover_extraction.csv')
+    refl, Y, test, train, weights, covertype, y_labels = manage_datasets('~/Google Drive File Stream/My Drive/CB_share/NEON/cover_classification/extraction_output/cover_extraction.csv')
 
-    for cover in np.unique(covertype):
-        fraction = np.sum(covertype == cover) / len(covertype)
-        print(f'{cover}: {fraction}')
-    quit()
     #preds, dim_names = nn_scenario_test(refl, Y, weights, test, train, n_epochs=2, its=100, layers_range=layers_range,
-    #                                    node_range=node_range, dropout_range=dropout_range)
+    #                                    node_range=node_range, dropout_range=dropout_range, classes=Y.shape[1])
     plotting_model_fits_singleclass(Y, test, covertype, layers_range, node_range, dropout_range)
 
 
@@ -50,10 +46,6 @@ def manage_datasets(import_data, category='aspen', weighting=False):
     covertype = np.array(data_set[['covertype']]).flatten()
     print(np.unique(covertype))
 
-    # Identifying aspen in boolian vector format
-    aspen = np.zeros(len(xy)).astype(bool)
-    aspen[covertype == category] = True
-
     # Managing bad bands
     bad_bands_refl = np.zeros(426).astype(bool)
     bad_bands_refl[:8] = True
@@ -68,10 +60,22 @@ def manage_datasets(import_data, category='aspen', weighting=False):
     good_data = good_data.flatten()
 
     refl = refl[good_data, ...]
-    aspen = aspen[good_data, ...]
+    covertype = covertype[good_data, ...]
     xy = xy[good_data, :]
 
-    Y = (aspen == True).reshape(-1, 1)
+    if category is not None:
+        Y = np.zeros((len(covertype),2)).astype(bool)
+        Y[:,0] = covertype == category
+        Y[:,1] = covertype != category
+        y_labels = [category, 'not ' + category]
+    else:
+        # If None, one-hot-encode
+        unique_categories = np.unique(category)
+        Y = np.zeros((len(covertype), len(unique_categories))).astype(bool)
+        for _cat, cat in enumerate(unique_categories):
+            Y[:,_cat] = covertype == cat
+        y_labels = list(unique_categories)
+
 
     np.random.seed(13)
     perm = np.random.permutation(Y.shape[0])
@@ -95,6 +99,14 @@ def manage_datasets(import_data, category='aspen', weighting=False):
     test = np.logical_not(train)
     print('Fraction Training Data: {}'.format((np.sum(train) / float(len(train)))))
     print('Fraction Testing Data: {}'.format((np.sum(test) / float(len(train)))))
+
+
+    for cover in np.unique(covertype):
+        fraction = np.sum(covertype[train] == cover) / len(covertype[train])
+        print(f'% Training data is {cover}: {fraction}')
+    for cover in np.unique(covertype):
+        fraction = np.sum(covertype[test] == cover) / len(covertype[test])
+        print(f'% Testing data is {cover}: {fraction}')
 
     #initialize weights vector and set to one for use in case where weighting == False
     weights = np.zeros(Y.shape[0])
@@ -121,7 +133,7 @@ def manage_datasets(import_data, category='aspen', weighting=False):
     joblib.dump(scaler, 'output/trained_models/nn_aspen_scaler')
 
     # Return outputs of function
-    return refl, Y, test, train, weights, covertype
+    return refl, Y, test, train, weights, covertype, y_labels
 
 
     # Create NN model structure, and compile.  Ultimate structure desided after pretty
@@ -156,9 +168,7 @@ def nn_model(refl, num_layers, num_nodes, classes, dropout, loss_function, outpu
 
 
 def nn_scenario_test(refl, Y, weights, test, train, layers_range=[4], node_range=[400], classes=2, dropout_range=[0.4],
-                     loss_function='binary_crossentropy', output_activation='sigmoid', n_epochs=5, its=20):
-    # reformat Y data for crossentropy loss function
-    cY = np.hstack([Y, 1-Y])
+                     loss_function='categorical_crossentropy', output_activation='sigmoid', n_epochs=5, its=20):
 
     predictions = np.zeros((len(layers_range), len(dropout_range), len(node_range), len(range(its)), len(Y))).astype(np.float32)
     dim_names = ['layers', 'dropout', 'node', 'iteration']
@@ -176,8 +186,8 @@ def nn_scenario_test(refl, Y, weights, test, train, layers_range=[4], node_range
                     print('layers {}, nodes {}, dropout {}, iteration {}'.format(nl, nn, dr, _i))
                     # weights - this is to even out the importance of small classes -
                     # needs to be updated for categorical rather than binary
-                    model.fit(refl[train, ...], cY[train, ...], epochs=n_epochs, sample_weight=weights[train],
-                              validation_data=(refl[test, ...], cY[test, ...], weights[test]),
+                    model.fit(refl[train, ...], Y[train, ...], epochs=n_epochs, sample_weight=weights[train],
+                              validation_data=(refl[test, ...], Y[test, ...], weights[test]),
                               batch_size=1000)  # can be adjusted if getting memory errors
 
                     pred = model.predict(refl)
