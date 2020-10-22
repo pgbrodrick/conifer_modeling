@@ -19,15 +19,20 @@ from keras.layers import BatchNormalization, Conv2D, Dense, Flatten, MaxPooling2
 
 
 def main():
-
-    layers_range = [2, 4, 6]
-    node_range = [100, 250, 400]
-    dropout_range = [0.2, 0.4]
-    refl, Y, test, train, weights, covertype, y_labels = manage_datasets('~/Google Drive File Stream/My Drive/CB_share/NEON/cover_classification/extraction_output/cover_extraction.csv')
-
-    #preds, dim_names = nn_scenario_test(refl, Y, weights, test, train, n_epochs=2, its=100, layers_range=layers_range,
+    file_path = '~/Google Drive File Stream/My Drive/CB_share/NEON/cover_classification/extraction_output/cover_extraction.csv'
+    layers_range = [4]
+    node_range = [250]
+    dropout_range = [0.2]
+    refl, Y, test, train, weights, covertype, y_labels = manage_datasets(file_path, category=None)
+    #print(Y)
+    #print(y_labels)
+    #preds, dim_names = nn_scenario_test(refl, Y, weights, test, train, n_epochs=2, its=10, layers_range=layers_range,
     #                                    node_range=node_range, dropout_range=dropout_range, classes=Y.shape[1])
-    plotting_model_fits_singleclass(Y, test, covertype, layers_range, node_range, dropout_range)
+
+    # plotting_model_fits(Y, test, covertype, layers_range, node_range, dropout_range)
+    for cover in y_labels:
+        plotting_model_fits_singleclass(Y, test, covertype, layers_range, node_range, dropout_range,
+                                        matchcover=cover, classlabels=y_labels)
 
 
 def manage_datasets(import_data, category='aspen', weighting=False):
@@ -65,12 +70,12 @@ def manage_datasets(import_data, category='aspen', weighting=False):
 
     if category is not None:
         Y = np.zeros((len(covertype),2)).astype(bool)
-        Y[:,0] = covertype == category
-        Y[:,1] = covertype != category
-        y_labels = [category, 'not ' + category]
+        Y[:,1] = covertype == category
+        Y[:,0] = covertype != category
+        y_labels = ['not ' + category, category]
     else:
         # If None, one-hot-encode
-        unique_categories = np.unique(category)
+        unique_categories = np.unique(covertype)
         Y = np.zeros((len(covertype), len(unique_categories))).astype(bool)
         for _cat, cat in enumerate(unique_categories):
             Y[:,_cat] = covertype == cat
@@ -102,10 +107,10 @@ def manage_datasets(import_data, category='aspen', weighting=False):
 
 
     for cover in np.unique(covertype):
-        fraction = np.sum(covertype[train] == cover) / len(covertype[train])
+        fraction = 100*np.sum(covertype[train] == cover) / len(covertype[train])
         print(f'% Training data is {cover}: {fraction}')
     for cover in np.unique(covertype):
-        fraction = np.sum(covertype[test] == cover) / len(covertype[test])
+        fraction = 100*np.sum(covertype[test] == cover) / len(covertype[test])
         print(f'% Testing data is {cover}: {fraction}')
 
     #initialize weights vector and set to one for use in case where weighting == False
@@ -191,17 +196,17 @@ def nn_scenario_test(refl, Y, weights, test, train, layers_range=[4], node_range
                               batch_size=1000)  # can be adjusted if getting memory errors
 
                     pred = model.predict(refl)
-                    pred = 1 - np.argmax(pred, axis=1)
+                    pred = np.argmax(pred, axis=1)
                     predictions[_nl, _dr, _nn, _i, :] = pred
 
-                    out_name = 'output/test_1.npz'
+                    out_name = 'output/multiclass_test_1.npz'
                     np.savez(out_name, predictions=predictions, dim_names=dim_names)
 
     return predictions, dim_names
 
 
-def plotting_model_fits(Y, to_plot, covertype, layers_range, node_range, dropout_range):
-    npzf = np.load('output/test_1.npz')
+def plotting_model_fits(Y, to_plot, covertype, layers_range, node_range, dropout_range, y_labels):
+    npzf = np.load('output/multiclass_test_1.npz')
     predictions = npzf['predictions']
     dim_names = npzf['dim_names']
 
@@ -222,15 +227,16 @@ def plotting_model_fits(Y, to_plot, covertype, layers_range, node_range, dropout
     #false_negatives = np.sum(np.logical_and(predictions != Y, predictions == 0), axis=-1)
 
     # But to be interesting, let's do it for the covertype
-    un_covertype = np.unique(covertype)
-    for cover in un_covertype:
+    #un_covertype = np.unique(covertype)
+    for _c, cover in enumerate(y_labels):
         # defining the index where covertype is one of the unique covers
         cover_Y = covertype == cover
 
         # all these are being done over the entire 5-D array and result in 4-D arrays for each
 
         # defining where cover is equal to this class and where this class is predicted as aspen.
-        true_positives = np.sum(np.logical_and(predictions == cover_Y, cover_Y == 1), axis=-1)
+        #### NOT SURE ABOUT INDEXING HERE NOW THAT IT"S MULTICLASS
+        true_positives = np.sum(np.logical_and(predictions == cover_Y, cover_Y == _c), axis=-1)
 
         # prediction is aspen, actual is not this cover type - only useful for aspen
         false_positives = np.sum(np.logical_and(predictions != cover_Y, predictions == 1), axis=-1)
@@ -277,11 +283,11 @@ def plotting_model_fits(Y, to_plot, covertype, layers_range, node_range, dropout
             plt.title(axname)
             plt.legend(axis_legends[_ax])
 
-        plt.savefig(f'figs/aggregate_figs_{cover}.png', dpi=200, bbox_inches='tight')
+        plt.savefig(f'figs/multiclass_aggregate_figs_{cover}.png', dpi=200, bbox_inches='tight')
 
 
-def plotting_model_fits_singleclass(Y, to_plot, covertype, layers_range, node_range, dropout_range, matchcover='aspen'):
-    npzf = np.load('output/test_1.npz')
+def plotting_model_fits_singleclass(Y, to_plot, covertype, layers_range, node_range, dropout_range, matchcover, classlabels):
+    npzf = np.load('output/multiclass_test_1.npz')
     predictions = npzf['predictions']
     dim_names = npzf['dim_names']
 
@@ -295,25 +301,23 @@ def plotting_model_fits_singleclass(Y, to_plot, covertype, layers_range, node_ra
     covertype = covertype[to_plot]
 
     # But to be interesting, let's do it for the covertype
-    un_covertype = np.unique(covertype)
 
     # Now lets make some aggregate plots
     axis_names = ['Layers', 'Dropout', 'Nodes']
     axis_legends = [layers_range, dropout_range, node_range]
-    gs = gridspec.GridSpec(ncols=len(axis_names), nrows=len(un_covertype)+1, wspace=0.1, hspace=0.4)
-    fig = plt.figure(figsize=(4 * len(axis_names)*1.2, 4 * (len(un_covertype)+1)))
-
+    gs = gridspec.GridSpec(ncols=len(axis_names), nrows=len(classlabels)+1, wspace=0.1, hspace=0.4)
+    fig = plt.figure(figsize=(4 * len(axis_names)*1.2, 4 * (len(classlabels)+1)))
     # defining where cover is equal to this class and where this class is predicted as aspen.
-    true_positives = np.sum(np.logical_and(predictions == 1, covertype == matchcover), axis=-1)
+    true_positives = np.sum(np.logical_and(predictions == classlabels.index(matchcover), covertype == matchcover), axis=-1)
 
     # falsely predicted 0 when this class was matchcover
-    false_negatives = np.sum(np.logical_and(predictions == 0, covertype == matchcover), axis=-1)
+    false_negatives = np.sum(np.logical_and(predictions != classlabels.index(matchcover), covertype == matchcover), axis=-1)
 
 
-    for _cover, cover in enumerate(un_covertype):
+    for _cover, cover in enumerate(classlabels):
 
         # prediction is of class matchcover, actual is of multiple classes.
-        false_positives = np.sum(np.logical_and(covertype == cover, predictions == 1), axis=-1)
+        false_positives = np.sum(np.logical_and(covertype == cover, predictions == classlabels.index(matchcover)), axis=-1)
 
         # And some bulk numbers about the particular cover type
         num_cover = np.sum(covertype == matchcover)
@@ -336,12 +340,13 @@ def plotting_model_fits_singleclass(Y, to_plot, covertype, layers_range, node_ra
                     plt.ylabel('True Positive Rate')
                 plt.title(axname)
                 plt.legend(axis_legends[_ax])
-                plt.ylim([0, 1])
+                plt.ylim([-0.05, 1.05])
 
                 # Do false negatives
                 ax = fig.add_subplot(gs[1, _ax])
                 # averaged across two of the axes - tuple is required instead of list for denoting multiple axes to sum over
                 mean_slice = np.mean(false_negatives / num_cover, axis=tuple(sumaxis))
+
                 # transpose to allow different treatments to be in second axis and iterations in first for plotting
                 # this is because we want the iterations on the x axis
                 plt.plot(np.transpose(mean_slice))
@@ -350,20 +355,25 @@ def plotting_model_fits_singleclass(Y, to_plot, covertype, layers_range, node_ra
                     plt.ylabel('False negative rate')
                 plt.title(axname)
                 plt.legend(axis_legends[_ax])
-                plt.ylim([0, 1])
+                plt.ylim([-0.05, 1.05])
 
             else:
                 # Do per-class false positives
-                ax = fig.add_subplot(gs[1 + _cover,_ax])
+                offset = 0
+                if classlabels.index(matchcover) < _cover:
+                    offset = -1
+                ax = fig.add_subplot(gs[2 + _cover + offset,_ax])
                 plt.plot(np.transpose(np.mean(false_positives / num_cover, axis=tuple(sumaxis))))
                 plt.xlabel('Iteration')
                 if _ax == 0:
                     plt.ylabel(f'Predicted {cover} but actually {matchcover}\n relative to true {matchcover}')
                 plt.title(axname)
                 plt.legend(axis_legends[_ax])
-                plt.ylim([0,1])
+                plt.ylim([-0.05, 1.05])
 
-    plt.savefig(f'figs/single_class_breakout_1.png', dpi=200, bbox_inches='tight')
+    plotname = f'figs/{matchcover}_class_breakout.png'
+    print(f'Saving {plotname}')
+    plt.savefig(plotname, dpi=200, bbox_inches='tight')
 
 
 
