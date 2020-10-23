@@ -19,20 +19,18 @@ from keras.layers import BatchNormalization, Conv2D, Dense, Flatten, MaxPooling2
 
 
 def main():
-    file_path = '~/Google Drive File Stream/My Drive/CB_share/NEON/cover_classification/extraction_output/cover_extraction.csv'
-    layers_range = [4]
-    node_range = [250]
-    dropout_range = [0.2]
+    file_path = '~/Google Drive File Stream/My Drive/CB_share/NEON/cover_classification/extraction_output/cover_extraction_20201021.csv'
+    layers_range = [2]
+    node_range = [250, 550]
+    dropout_range = [0.4]
     refl, Y, test, train, weights, covertype, y_labels = manage_datasets(file_path, category=None)
     #print(Y)
     #print(y_labels)
-    #preds, dim_names = nn_scenario_test(refl, Y, weights, test, train, n_epochs=2, its=10, layers_range=layers_range,
-    #                                    node_range=node_range, dropout_range=dropout_range, classes=Y.shape[1])
+    preds, dim_names = nn_scenario_test(refl, Y, weights, test, train, y_labels, covertype, n_epochs=2, its=150,
+                                        layers_range=layers_range, node_range=node_range, dropout_range=dropout_range, classes=Y.shape[1])
 
     # plotting_model_fits(Y, test, covertype, layers_range, node_range, dropout_range)
-    for cover in y_labels:
-        plotting_model_fits_singleclass(Y, test, covertype, layers_range, node_range, dropout_range,
-                                        matchcover=cover, classlabels=y_labels)
+
 
 
 def manage_datasets(import_data, category='aspen', weighting=False):
@@ -63,6 +61,9 @@ def manage_datasets(import_data, category='aspen', weighting=False):
     good_data = np.ones(len(xy)).astype(bool)
     #good_data[shade == 0] = False
     good_data = good_data.flatten()
+    # if there are any nans in the entire row, remove that pixel
+    good_data[np.any(np.isnan(refl), axis=1)] = False
+    good_data[np.all(refl == 0, axis=1)] = False
 
     refl = refl[good_data, ...]
     covertype = covertype[good_data, ...]
@@ -132,10 +133,10 @@ def manage_datasets(import_data, category='aspen', weighting=False):
     refl = refl / brightness[:, np.newaxis]
 
     # Scale brightness normalized reflectance data and save scaling information
-    scaler = preprocessing.StandardScaler()
-    scaler.fit(refl[train, :])
-    refl = scaler.transform(refl)
-    joblib.dump(scaler, 'output/trained_models/nn_aspen_scaler')
+    #scaler = preprocessing.StandardScaler()
+    #scaler.fit(refl[train, :])
+    #refl = scaler.transform(refl)
+    #joblib.dump(scaler, 'output/trained_models/nn_aspen_scaler')
 
     # Return outputs of function
     return refl, Y, test, train, weights, covertype, y_labels
@@ -172,7 +173,7 @@ def nn_model(refl, num_layers, num_nodes, classes, dropout, loss_function, outpu
     return model
 
 
-def nn_scenario_test(refl, Y, weights, test, train, layers_range=[4], node_range=[400], classes=2, dropout_range=[0.4],
+def nn_scenario_test(refl, Y, weights, test, train, y_labels, covertype, layers_range=[4], node_range=[400], classes=2, dropout_range=[0.4],
                      loss_function='categorical_crossentropy', output_activation='sigmoid', n_epochs=5, its=20):
 
     predictions = np.zeros((len(layers_range), len(dropout_range), len(node_range), len(range(its)), len(Y))).astype(np.float32)
@@ -199,14 +200,18 @@ def nn_scenario_test(refl, Y, weights, test, train, layers_range=[4], node_range
                     pred = np.argmax(pred, axis=1)
                     predictions[_nl, _dr, _nn, _i, :] = pred
 
-                    out_name = 'output/multiclass_test_1.npz'
+                    out_name = 'output/multiclass_test_5.npz'
                     np.savez(out_name, predictions=predictions, dim_names=dim_names)
+
+                for cover in y_labels:
+                    plotting_model_fits_singleclass(Y, test, covertype, layers_range, node_range, dropout_range,
+                                                    matchcover=cover, classlabels=y_labels)
 
     return predictions, dim_names
 
 
 def plotting_model_fits(Y, to_plot, covertype, layers_range, node_range, dropout_range, y_labels):
-    npzf = np.load('output/multiclass_test_1.npz')
+    npzf = np.load('output/multiclass_test_2.npz')
     predictions = npzf['predictions']
     dim_names = npzf['dim_names']
 
@@ -287,7 +292,7 @@ def plotting_model_fits(Y, to_plot, covertype, layers_range, node_range, dropout
 
 
 def plotting_model_fits_singleclass(Y, to_plot, covertype, layers_range, node_range, dropout_range, matchcover, classlabels):
-    npzf = np.load('output/multiclass_test_1.npz')
+    npzf = np.load('output/multiclass_test_5.npz')
     predictions = npzf['predictions']
     dim_names = npzf['dim_names']
 
@@ -371,7 +376,7 @@ def plotting_model_fits_singleclass(Y, to_plot, covertype, layers_range, node_ra
                 plt.legend(axis_legends[_ax])
                 plt.ylim([-0.05, 1.05])
 
-    plotname = f'figs/{matchcover}_class_breakout.png'
+    plotname = f'figs/multiclass/{matchcover}_class_breakout_5.png'
     print(f'Saving {plotname}')
     plt.savefig(plotname, dpi=200, bbox_inches='tight')
 
