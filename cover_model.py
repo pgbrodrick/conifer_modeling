@@ -6,30 +6,57 @@ import keras
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
+import os
 
 from tqdm import tqdm
-from sklearn.externals import joblib
+import joblib
+#from sklearn.externals import joblib
 from sklearn import preprocessing
 from sklearn.metrics import confusion_matrix
 from keras.layers import BatchNormalization, Conv2D, Dense, Flatten, MaxPooling2D, Concatenate, SeparableConv2D, Dropout
+from itertools import product
 
 
 
-#mpl.use('Agg')
+mpl.use('Agg')
 
 
 def main():
     file_path = '~/Google Drive File Stream/My Drive/CB_share/NEON/cover_classification/extraction_output/cover_extraction_20201021.csv'
+    #file_path = 'data/cover_extraction_20201021.csv'
     layers_range = [2]
     node_range = [250, 550]
     dropout_range = [0.4]
-    refl, Y, test, train, weights, covertype, y_labels = manage_datasets(file_path, category=None)
-    #print(Y)
-    #print(y_labels)
-    preds, dim_names = nn_scenario_test(refl, Y, weights, test, train, y_labels, covertype, n_epochs=2, its=150,
+
+    data_munge_dir = 'munged/data_splits.npz' # (multiclass test 6)
+    data_munge_dir = 'munged/data_splits_7.npz' # (multiclass test 7)
+
+    if os.path.isfile(data_munge_dir):
+        npzf = np.load(data_munge_dir, allow_pickle=True)
+        refl = npzf['refl']
+        Y = npzf['Y']
+        test = npzf['test']
+        train = npzf['train']
+        weights = npzf['weights']
+        covertype = npzf['covertype']
+        y_labels = npzf['y_labels']
+    else:
+        refl, Y, test, train, weights, covertype, y_labels = manage_datasets(file_path, category=None)
+        np.savez(data_munge_dir, refl=refl, Y=Y, test=test, train=train, weights=weights, covertype=covertype, y_labels=y_labels)
+
+    output_filename = 'output/multiclass_test_5.npz' #basic weighting
+    output_filename = 'output/multiclass_test_6.npz' #shade masked, weighted
+    output_filename = 'output/multiclass_test_7.npz' #shade masked, weighted, 1000 x 1000 grids
+
+    preds, dim_names = nn_scenario_test(output_filename, refl, Y, weights, test, train, y_labels, covertype, n_epochs=2, its=50,
                                         layers_range=layers_range, node_range=node_range, dropout_range=dropout_range, classes=Y.shape[1])
 
-    # plotting_model_fits(Y, test, covertype, layers_range, node_range, dropout_range)
+    plotting_model_fits(Y, test, covertype, layers_range, node_range, dropout_range, y_labels)
+    for cover in y_labels:
+        plotting_model_fits_singleclass(output_filename, test, covertype, layers_range, node_range, dropout_range,
+                                        matchcover=cover, classlabels=y_labels)
+
+    plot_confusion_matrix(output_filename, train, np.argmax(Y,axis=1), layers_range, node_range, dropout_range, y_labels)
 
 
 
@@ -39,7 +66,7 @@ def manage_datasets(import_data, category='aspen', weighting=False):
 
     # extract x y coordinates for each pixel
     xy = np.array(data_set[['X_UTM', 'Y_UTM']])
-    #shade = np.array(data_set['ered_B_1']).flatten()
+    shade = np.array(data_set['hade_B_1']).flatten()
     #tch = np.array(data_set['_tch_B_1']).flatten()
 
     # extract reflectance data from csv
@@ -59,7 +86,7 @@ def manage_datasets(import_data, category='aspen', weighting=False):
     refl = refl[:, np.all(np.isnan(refl) == False, axis=0)]
 
     good_data = np.ones(len(xy)).astype(bool)
-    #good_data[shade == 0] = False
+    good_data[shade == 0] = False
     good_data = good_data.flatten()
     # if there are any nans in the entire row, remove that pixel
     good_data[np.any(np.isnan(refl), axis=1)] = False
@@ -87,8 +114,8 @@ def manage_datasets(import_data, category='aspen', weighting=False):
     perm = np.random.permutation(Y.shape[0])
     train = np.zeros(perm.shape).astype(bool)
 
-    n_xstep = 100
-    n_ystep = 100
+    n_xstep = 1000
+    n_ystep = 1000
     x_space = np.linspace(np.min(xy[:, 0]), np.max(xy[:, 0]), n_xstep)
     y_space = np.linspace(np.min(xy[:, 1]), np.max(xy[:, 1]), n_ystep)
     grids = np.zeros((len(y_space), len(x_space))).flatten()
@@ -115,8 +142,14 @@ def manage_datasets(import_data, category='aspen', weighting=False):
         print(f'% Testing data is {cover}: {fraction}')
 
     #initialize weights vector and set to one for use in case where weighting == False
-    weights = np.zeros(Y.shape[0])
-    weights[:] = 1
+    weights = np.ones(Y.shape[0])
+
+
+    standardized_count = len(covertype[train]) / float(len(y_labels))
+    for _cover, cover in enumerate(y_labels):
+        w = standardized_count / np.sum(covertype[train] == cover) 
+        weights[cover == covertype] = w
+        print(f'cover: {cover}, weight: {w}')
 
     # If weighting is needed or desired, adapt code here
     if weighting == True:
@@ -173,10 +206,11 @@ def nn_model(refl, num_layers, num_nodes, classes, dropout, loss_function, outpu
     return model
 
 
-def nn_scenario_test(refl, Y, weights, test, train, y_labels, covertype, layers_range=[4], node_range=[400], classes=2, dropout_range=[0.4],
+def nn_scenario_test(output_filename, refl, Y, weights, test, train, y_labels, covertype, layers_range=[4], node_range=[400], classes=2, dropout_range=[0.4],
                      loss_function='categorical_crossentropy', output_activation='sigmoid', n_epochs=5, its=20):
 
     predictions = np.zeros((len(layers_range), len(dropout_range), len(node_range), len(range(its)), len(Y))).astype(np.float32)
+    predictions[...] = np.nan
     dim_names = ['layers', 'dropout', 'node', 'iteration']
 
     # Run through and train model in 5 epoch steps - basically instituting a manual stopping criteria
@@ -200,18 +234,17 @@ def nn_scenario_test(refl, Y, weights, test, train, y_labels, covertype, layers_
                     pred = np.argmax(pred, axis=1)
                     predictions[_nl, _dr, _nn, _i, :] = pred
 
-                    out_name = 'output/multiclass_test_5.npz'
-                    np.savez(out_name, predictions=predictions, dim_names=dim_names)
+                    np.savez(output_filename, predictions=predictions, dim_names=dim_names)
 
                 for cover in y_labels:
-                    plotting_model_fits_singleclass(Y, test, covertype, layers_range, node_range, dropout_range,
+                    plotting_model_fits_singleclass(output_filename, test, covertype, layers_range, node_range, dropout_range,
                                                     matchcover=cover, classlabels=y_labels)
 
     return predictions, dim_names
 
 
-def plotting_model_fits(Y, to_plot, covertype, layers_range, node_range, dropout_range, y_labels):
-    npzf = np.load('output/multiclass_test_2.npz')
+def plotting_model_fits(output_filename, to_plot, covertype, layers_range, node_range, dropout_range, y_labels):
+    npzf = np.load(output_filename)
     predictions = npzf['predictions']
     dim_names = npzf['dim_names']
 
@@ -241,21 +274,21 @@ def plotting_model_fits(Y, to_plot, covertype, layers_range, node_range, dropout
 
         # defining where cover is equal to this class and where this class is predicted as aspen.
         #### NOT SURE ABOUT INDEXING HERE NOW THAT IT"S MULTICLASS
-        true_positives = np.sum(np.logical_and(predictions == cover_Y, cover_Y == _c), axis=-1)
+        true_positives = np.nansum(np.logical_and(predictions == cover_Y, cover_Y == _c), axis=-1)
 
         # prediction is aspen, actual is not this cover type - only useful for aspen
-        false_positives = np.sum(np.logical_and(predictions != cover_Y, predictions == 1), axis=-1)
+        false_positives = np.nansum(np.logical_and(predictions != cover_Y, predictions == 1), axis=-1)
 
         # prediction is not aspen, cover is this cover type
-        true_negatives = np.sum(np.logical_and(predictions == cover_Y, cover_Y == 0), axis=-1)
+        true_negatives = np.nansum(np.logical_and(predictions == cover_Y, cover_Y == 0), axis=-1)
 
         # prediction is not aspen, actual is not this cover type - only meaningful for aspen now
-        false_negatives = np.sum(np.logical_and(predictions != cover_Y, predictions == 0), axis=-1)
+        false_negatives = np.nansum(np.logical_and(predictions != cover_Y, predictions == 0), axis=-1)
         # Dimensions of the above sums are: layers, dropout, nodes, iterations
 
         # And some bulk numbers about the particular cover type
-        num_cover = np.sum(cover_Y)
-        num_not_cover = np.sum(np.logical_not(cover_Y))
+        num_cover = np.nansum(cover_Y)
+        num_not_cover = np.nansum(np.logical_not(cover_Y))
 
         # Now lets make some aggregate plots
         axis_names = ['Layers','Dropout','Nodes']
@@ -271,7 +304,7 @@ def plotting_model_fits(Y, to_plot, covertype, layers_range, node_range, dropout
             # Do layers TPR (axis 0)
             ax = fig.add_subplot(gs[0,_ax])
             # averaged across two of the axes - tuple is required instead of list for denoting multiple axes to sum over
-            mean_slice = np.mean(true_positives / num_cover, axis=tuple(sumaxis))
+            mean_slice = np.nanmean(true_positives / num_cover, axis=tuple(sumaxis))
             # transpose to allow different treatments to be in second axis and iterations in first for plotting
             # this is because we want the iterations on the x axis
             plt.plot(np.transpose(mean_slice))
@@ -282,17 +315,18 @@ def plotting_model_fits(Y, to_plot, covertype, layers_range, node_range, dropout
 
             # Do layers FPP (False positives / # true elements)
             ax = fig.add_subplot(gs[1,_ax])
-            plt.plot(np.transpose(np.mean(false_positives / num_cover, axis=tuple(sumaxis))))
+            plt.plot(np.transpose(np.nanmean(false_positives / num_cover, axis=tuple(sumaxis))))
             plt.xlabel('Iteration')
             plt.ylabel('False Positive Rate Prime')
             plt.title(axname)
             plt.legend(axis_legends[_ax])
 
-        plt.savefig(f'figs/multiclass_aggregate_figs_{cover}.png', dpi=200, bbox_inches='tight')
+        baseout = os.path.splitext(os.path.basename(output_filename))[0]
+        plt.savefig(f'figs/{baseout}_{cover}.png', dpi=200, bbox_inches='tight')
 
 
-def plotting_model_fits_singleclass(Y, to_plot, covertype, layers_range, node_range, dropout_range, matchcover, classlabels):
-    npzf = np.load('output/multiclass_test_5.npz')
+def plotting_model_fits_singleclass(output_filename, to_plot, covertype, layers_range, node_range, dropout_range, matchcover, classlabels):
+    npzf = np.load(output_filename)
     predictions = npzf['predictions']
     dim_names = npzf['dim_names']
 
@@ -310,23 +344,23 @@ def plotting_model_fits_singleclass(Y, to_plot, covertype, layers_range, node_ra
     # Now lets make some aggregate plots
     axis_names = ['Layers', 'Dropout', 'Nodes']
     axis_legends = [layers_range, dropout_range, node_range]
-    gs = gridspec.GridSpec(ncols=len(axis_names), nrows=len(classlabels)+1, wspace=0.1, hspace=0.4)
     fig = plt.figure(figsize=(4 * len(axis_names)*1.2, 4 * (len(classlabels)+1)))
+    gs = gridspec.GridSpec(ncols=len(axis_names), nrows=len(classlabels)+1, wspace=0.1, hspace=0.4)
     # defining where cover is equal to this class and where this class is predicted as aspen.
-    true_positives = np.sum(np.logical_and(predictions == classlabels.index(matchcover), covertype == matchcover), axis=-1)
+    true_positives = np.nansum(np.logical_and(predictions == classlabels.index(matchcover), covertype == matchcover), axis=-1)
 
     # falsely predicted 0 when this class was matchcover
-    false_negatives = np.sum(np.logical_and(predictions != classlabels.index(matchcover), covertype == matchcover), axis=-1)
+    false_negatives = np.nansum(np.logical_and(predictions != classlabels.index(matchcover), covertype == matchcover), axis=-1)
 
 
     for _cover, cover in enumerate(classlabels):
 
         # prediction is of class matchcover, actual is of multiple classes.
-        false_positives = np.sum(np.logical_and(covertype == cover, predictions == classlabels.index(matchcover)), axis=-1)
+        false_positives = np.nansum(np.logical_and(covertype == cover, predictions == classlabels.index(matchcover)), axis=-1)
 
         # And some bulk numbers about the particular cover type
-        num_cover = np.sum(covertype == matchcover)
-        num_not_cover = np.sum(covertype != matchcover)
+        num_cover = np.nansum(covertype == matchcover)
+        num_not_cover = np.nansum(covertype != matchcover)
 
         for _ax, axname in enumerate(axis_names):
             sumaxis = [0,1,2]
@@ -336,7 +370,7 @@ def plotting_model_fits_singleclass(Y, to_plot, covertype, layers_range, node_ra
                 # Do TPR
                 ax = fig.add_subplot(gs[0, _ax])
                 # averaged across two of the axes - tuple is required instead of list for denoting multiple axes to sum over
-                mean_slice = np.mean(true_positives / num_cover, axis=tuple(sumaxis))
+                mean_slice = np.nanmean(true_positives / num_cover, axis=tuple(sumaxis))
                 # transpose to allow different treatments to be in second axis and iterations in first for plotting
                 # this is because we want the iterations on the x axis
                 plt.plot(np.transpose(mean_slice))
@@ -350,7 +384,7 @@ def plotting_model_fits_singleclass(Y, to_plot, covertype, layers_range, node_ra
                 # Do false negatives
                 ax = fig.add_subplot(gs[1, _ax])
                 # averaged across two of the axes - tuple is required instead of list for denoting multiple axes to sum over
-                mean_slice = np.mean(false_negatives / num_cover, axis=tuple(sumaxis))
+                mean_slice = np.nanmean(false_negatives / num_cover, axis=tuple(sumaxis))
 
                 # transpose to allow different treatments to be in second axis and iterations in first for plotting
                 # this is because we want the iterations on the x axis
@@ -368,7 +402,7 @@ def plotting_model_fits_singleclass(Y, to_plot, covertype, layers_range, node_ra
                 if classlabels.index(matchcover) < _cover:
                     offset = -1
                 ax = fig.add_subplot(gs[2 + _cover + offset,_ax])
-                plt.plot(np.transpose(np.mean(false_positives / num_cover, axis=tuple(sumaxis))))
+                plt.plot(np.transpose(np.nanmean(false_positives / num_cover, axis=tuple(sumaxis))))
                 plt.xlabel('Iteration')
                 if _ax == 0:
                     plt.ylabel(f'Predicted {cover} but actually {matchcover}\n relative to true {matchcover}')
@@ -376,9 +410,100 @@ def plotting_model_fits_singleclass(Y, to_plot, covertype, layers_range, node_ra
                 plt.legend(axis_legends[_ax])
                 plt.ylim([-0.05, 1.05])
 
-    plotname = f'figs/multiclass/{matchcover}_class_breakout_5.png'
+    baseout = os.path.splitext(os.path.basename(output_filename))[0]
+    plotname = f'figs/multiclass/{baseout}_{matchcover}_class_breakout_5.png'
     print(f'Saving {plotname}')
     plt.savefig(plotname, dpi=200, bbox_inches='tight')
+    plt.clf()
+    del fig
+
+
+def add_cm_plot(cm, ax, display_labels=None, cmap='viridis', include_values=True, values_format=None, xticks_rotation='vertical'):
+    # Borrowed in large part from https://github.com/scikit-learn/scikit-learn/blob/0fb307bf3/sklearn/metrics/_plot/confusion_matrix.py#L135
+    n_classes = cm.shape[0]
+    im_ = ax.imshow(cm, interpolation='nearest', cmap=cmap)
+    text_ = None
+    cmap_min, cmap_max = im_.cmap(0), im_.cmap(256)
+
+    if include_values:
+        text_ = np.empty_like(cm, dtype=object)
+
+        # print text with appropriate color depending on background
+        thresh = (cm.max() + cm.min()) / 2.0
+
+        for i, j in product(range(n_classes), range(n_classes)):
+            color = cmap_max if cm[i, j] < thresh else cmap_min
+
+            if values_format is None:
+                text_cm = format(cm[i, j], '.2g')
+                if cm.dtype.kind != 'f':
+                    text_d = format(cm[i, j], 'd')
+                    if len(text_d) < len(text_cm):
+                        text_cm = text_d
+            else:
+                text_cm = format(cm[i, j], values_format)
+
+            text_[i, j] = ax.text(
+                j, i, text_cm,
+                ha="center", va="center",
+                color=color)
+
+    if display_labels is None:
+        display_labels = np.arange(n_classes)
+    else:
+        display_labels = display_labels
+
+    plt.colorbar(im_, ax=ax)
+    ax.set(xticks=np.arange(n_classes),
+           yticks=np.arange(n_classes),
+           xticklabels=display_labels,
+           yticklabels=display_labels,
+           ylabel="True label",
+           xlabel="Predicted label")
+
+    ax.set_ylim((n_classes - 0.5, -0.5))
+    plt.setp(ax.get_xticklabels(), rotation=xticks_rotation)
+
+
+def plot_confusion_matrix(output_filename, train, covertype, layers_range, node_range, dropout_range, classlabels):
+    npzf = np.load(output_filename)
+    predictions = npzf['predictions']
+    dim_names = npzf['dim_names']
+
+
+    for _nl, nl in enumerate(layers_range):
+
+        for _dr, dr in enumerate(dropout_range):
+
+            for _nn, nn in enumerate(node_range):
+                fig = plt.figure(figsize=(13,4))
+                gs = gridspec.GridSpec(ncols=2, nrows=1, wspace=0.1, hspace=0.6)
+
+                ax = fig.add_subplot(gs[0,0])
+
+                pred = predictions[_nl, _dr, _nn, -1, :]
+                cm = confusion_matrix(covertype[train], pred[train])
+
+                add_cm_plot(cm, ax, classlabels)
+                plt.title('Train') 
+
+
+
+                ax = fig.add_subplot(gs[0,1])
+
+                cm = confusion_matrix(covertype[np.logical_not(train)], pred[np.logical_not(train)])
+
+                add_cm_plot(cm, ax, classlabels)
+                plt.title('Test') 
+
+
+                baseout = os.path.splitext(os.path.basename(output_filename))[0]
+                plotname = f'figs/cm/{baseout}_nl_{nl}_dr_{dr}_nn_{nn}_class_breakout_5.png'
+                print(f'Saving {plotname}')
+                plt.savefig(plotname, dpi=200, bbox_inches='tight')
+                plt.clf()
+                del fig
+
 
 
 
