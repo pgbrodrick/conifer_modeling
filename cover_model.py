@@ -39,7 +39,7 @@ def main():
         train = npzf['train']
         weights = npzf['weights']
         covertype = npzf['covertype']
-        y_labels = npzf['y_labels']
+        y_labels = npzf['y_labels'].tolist()
     else:
         refl, Y, test, train, weights, covertype, y_labels = manage_datasets(file_path, category=None)
         np.savez(data_munge_dir, refl=refl, Y=Y, test=test, train=train, weights=weights, covertype=covertype, y_labels=y_labels)
@@ -51,7 +51,7 @@ def main():
     preds, dim_names = nn_scenario_test(output_filename, refl, Y, weights, test, train, y_labels, covertype, n_epochs=2, its=50,
                                         layers_range=layers_range, node_range=node_range, dropout_range=dropout_range, classes=Y.shape[1])
 
-    plotting_model_fits(Y, test, covertype, layers_range, node_range, dropout_range, y_labels)
+    ##plotting_model_fits(Y, test, covertype, layers_range, node_range, dropout_range, y_labels)
     for cover in y_labels:
         plotting_model_fits_singleclass(output_filename, test, covertype, layers_range, node_range, dropout_range,
                                         matchcover=cover, classlabels=y_labels)
