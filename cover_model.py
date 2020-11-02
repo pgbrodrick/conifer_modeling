@@ -30,6 +30,7 @@ def main():
 
     data_munge_dir = 'munged/data_splits.npz' # (multiclass test 6)
     data_munge_dir = 'munged/data_splits_7.npz' # (multiclass test 7)
+    data_munge_dir = 'munged/data_splits_8.npz' # (with tch)
 
     if os.path.isfile(data_munge_dir):
         npzf = np.load(data_munge_dir, allow_pickle=True)
@@ -47,14 +48,15 @@ def main():
     output_filename = 'output/multiclass_test_5.npz' #basic weighting
     output_filename = 'output/multiclass_test_6.npz' #shade masked, weighted
     output_filename = 'output/multiclass_test_7.npz' #shade masked, weighted, 1000 x 1000 grids
+    output_filename = 'output/multiclass_test_8.npz' #shade masked, weighted, 1000 x 1000 grids, with tch
 
     preds, dim_names = nn_scenario_test(output_filename, refl, Y, weights, test, train, y_labels, covertype, n_epochs=2, its=50,
                                         layers_range=layers_range, node_range=node_range, dropout_range=dropout_range, classes=Y.shape[1])
 
     ##plotting_model_fits(Y, test, covertype, layers_range, node_range, dropout_range, y_labels)
-    for cover in y_labels:
-        plotting_model_fits_singleclass(output_filename, test, covertype, layers_range, node_range, dropout_range,
-                                        matchcover=cover, classlabels=y_labels)
+    #for cover in y_labels:
+    #    plotting_model_fits_singleclass(output_filename, test, covertype, layers_range, node_range, dropout_range,
+    #                                    matchcover=cover, classlabels=y_labels)
 
     plot_confusion_matrix(output_filename, train, np.argmax(Y,axis=1), layers_range, node_range, dropout_range, y_labels)
 
@@ -67,7 +69,7 @@ def manage_datasets(import_data, category='aspen', weighting=False):
     # extract x y coordinates for each pixel
     xy = np.array(data_set[['X_UTM', 'Y_UTM']])
     shade = np.array(data_set['hade_B_1']).flatten()
-    #tch = np.array(data_set['_tch_B_1']).flatten()
+    tch = np.array(data_set['h_me_B_1']).flatten()
 
     # extract reflectance data from csv
     refl = np.array(data_set)[:, -427:-1].astype(np.float32)
@@ -95,6 +97,8 @@ def manage_datasets(import_data, category='aspen', weighting=False):
     refl = refl[good_data, ...]
     covertype = covertype[good_data, ...]
     xy = xy[good_data, :]
+    tch = tch[good_data]
+    tch = tch.reshape((-1,1))
 
     if category is not None:
         Y = np.zeros((len(covertype),2)).astype(bool)
@@ -164,6 +168,7 @@ def manage_datasets(import_data, category='aspen', weighting=False):
     # brightness normalize
     brightness = np.sqrt(np.mean(np.power(refl, 2), axis=-1))
     refl = refl / brightness[:, np.newaxis]
+    refl = np.append(refl,tch,axis=-1)
 
     # Scale brightness normalized reflectance data and save scaling information
     #scaler = preprocessing.StandardScaler()
@@ -235,6 +240,7 @@ def nn_scenario_test(output_filename, refl, Y, weights, test, train, y_labels, c
                     predictions[_nl, _dr, _nn, _i, :] = pred
 
                     np.savez(output_filename, predictions=predictions, dim_names=dim_names)
+                    model.save(f'trained_models/cover_model_nl_{nl}_dr_{dr}_nn_{nn}_it_{_i}.h5')
 
                 for cover in y_labels:
                     plotting_model_fits_singleclass(output_filename, test, covertype, layers_range, node_range, dropout_range,
@@ -478,6 +484,7 @@ def plot_confusion_matrix(output_filename, train, covertype, layers_range, node_
             for _nn, nn in enumerate(node_range):
                 fig = plt.figure(figsize=(13,4))
                 gs = gridspec.GridSpec(ncols=2, nrows=1, wspace=0.1, hspace=0.6)
+                baseout = os.path.splitext(os.path.basename(output_filename))[0]
 
                 ax = fig.add_subplot(gs[0,0])
 
@@ -486,6 +493,7 @@ def plot_confusion_matrix(output_filename, train, covertype, layers_range, node_
 
                 add_cm_plot(cm, ax, classlabels)
                 plt.title('Train') 
+                np.savetxt(f'figs/cm/{baseout}_nl_{nl}_dr_{dr}_nn_{nn}_class_breakout_train.csv',cm,delimiter=',')
 
 
 
@@ -496,11 +504,13 @@ def plot_confusion_matrix(output_filename, train, covertype, layers_range, node_
                 add_cm_plot(cm, ax, classlabels)
                 plt.title('Test') 
 
+                np.savetxt(f'figs/cm/{baseout}_nl_{nl}_dr_{dr}_nn_{nn}_class_breakout_test.csv',cm,delimiter=',')
 
-                baseout = os.path.splitext(os.path.basename(output_filename))[0]
-                plotname = f'figs/cm/{baseout}_nl_{nl}_dr_{dr}_nn_{nn}_class_breakout_5.png'
+                plotname = f'figs/cm/{baseout}_nl_{nl}_dr_{dr}_nn_{nn}_class_breakout.png'
                 print(f'Saving {plotname}')
                 plt.savefig(plotname, dpi=200, bbox_inches='tight')
+                
+                
                 plt.clf()
                 del fig
 
