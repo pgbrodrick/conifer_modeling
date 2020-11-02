@@ -14,7 +14,7 @@ parser = argparse.ArgumentParser(description='Apply chem equation to BIL')
 parser.add_argument('refl_dat_f')
 parser.add_argument('output_name')
 parser.add_argument('-model_f', default='trained_models/conifer_nn_set_29.h5')
-parser.add_argument('-scaler', default='trained_models/nn_conifer_scaler')
+parser.add_argument('-scaler', default=None)
 parser.add_argument('-bn', default=True, type=bool)
 args = parser.parse_args()
 
@@ -76,8 +76,9 @@ for l in tqdm(range(0, max_y), ncols=80):
         if (args.bn):
             dat = dat / np.sqrt(np.nanmean(np.power(dat, 2), axis=1))[:, np.newaxis]
 
-        dat = scaler.transform(dat)
-        output_predictions[l, :] = model.predict(dat)[:, 0]
+        if args.scaler is not None:
+            dat = scaler.transform(dat)
+        output_predictions[l, :] = np.argmax(model.predict(dat))
 
 outDataset.GetRasterBand(1).WriteArray(output_predictions, 0, 0)
 del outDataset
