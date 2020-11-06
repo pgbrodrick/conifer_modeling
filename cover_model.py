@@ -16,7 +16,8 @@ from sklearn.metrics import confusion_matrix
 from keras.layers import BatchNormalization, Conv2D, Dense, Flatten, MaxPooling2D, Concatenate, SeparableConv2D, Dropout
 from itertools import product
 
-
+import warnings
+warnings.filterwarnings('ignore')
 
 mpl.use('Agg')
 
@@ -25,13 +26,20 @@ def main():
     file_path = '~/Google Drive File Stream/My Drive/CB_share/NEON/cover_classification/extraction_output/cover_extraction_20201021.csv'
     #file_path = 'data/cover_extraction_20201021.csv'
     layers_range = [2]
-    node_range = [250, 550]
+    node_range = [250]
     dropout_range = [0.4]
+    epochs_per_save = 100
+    iterations = 1
+    run_name = 'data_splits_9'  # with scaling, weighting, and shade masking
+    run_name = 'data_splits_10'  # with scaling, weighting and no shade masking
+    run_name = 'data_splits_11'  # with scaling, weighting and inverted shade masking
+    run_name = 'data_splits_12'  # with scaling, weighting and shade masking, without bn
+    run_name = 'data_splits_13'  # with scaling, weighting, shade masking, no batch normalization, with bn
+    run_name = 'data_splits_14'  # with scaling, weighting, no shade masking, no batch normalization, with bn, change sigmoid to linear
+    data_munge_dir = 'munged/' + run_name + '.npz'
+    output_filename = 'output/' + run_name + '.npz'
 
-    data_munge_dir = 'munged/data_splits.npz' # (multiclass test 6)
-    data_munge_dir = 'munged/data_splits_7.npz' # (multiclass test 7)
-    data_munge_dir = 'munged/data_splits_8.npz' # (with tch)
-
+    # only reimport and munge data if this has not already been done, otherwise import data to save compute time
     if os.path.isfile(data_munge_dir):
         npzf = np.load(data_munge_dir, allow_pickle=True)
         refl = npzf['refl']
@@ -42,27 +50,29 @@ def main():
         covertype = npzf['covertype']
         y_labels = npzf['y_labels'].tolist()
     else:
-        refl, Y, test, train, weights, covertype, y_labels = manage_datasets(file_path, category=None)
+        refl, Y, test, train, weights, covertype, y_labels = manage_datasets(file_path, run_name, shade_mask=False,
+                                                                             category=None, scaling=True,
+                                                                             brightness_norm=True)
+
         np.savez(data_munge_dir, refl=refl, Y=Y, test=test, train=train, weights=weights, covertype=covertype, y_labels=y_labels)
 
-    output_filename = 'output/multiclass_test_5.npz' #basic weighting
-    output_filename = 'output/multiclass_test_6.npz' #shade masked, weighted
-    output_filename = 'output/multiclass_test_7.npz' #shade masked, weighted, 1000 x 1000 grids
-    output_filename = 'output/multiclass_test_8.npz' #shade masked, weighted, 1000 x 1000 grids, with tch
-
-    preds, dim_names = nn_scenario_test(output_filename, refl, Y, weights, test, train, y_labels, covertype, n_epochs=2, its=50,
-                                        layers_range=layers_range, node_range=node_range, dropout_range=dropout_range, classes=Y.shape[1])
+    # Run
+    preds, dim_names = nn_scenario_test(output_filename, refl, Y, weights, test, train, y_labels, covertype, run_name,
+                                        n_epochs=epochs_per_save, its=iterations, layers_range=layers_range,
+                                        node_range=node_range, dropout_range=dropout_range, classes=Y.shape[1],
+                                        output_activation='linear')
 
     ##plotting_model_fits(Y, test, covertype, layers_range, node_range, dropout_range, y_labels)
-    #for cover in y_labels:
+    # for cover in y_labels:
     #    plotting_model_fits_singleclass(output_filename, test, covertype, layers_range, node_range, dropout_range,
     #                                    matchcover=cover, classlabels=y_labels)
 
     plot_confusion_matrix(output_filename, train, np.argmax(Y,axis=1), layers_range, node_range, dropout_range, y_labels)
 
 
+def manage_datasets(import_data, run_name, category='aspen', weighting=False, scaling=False, wtrl_include=False,
+                    tch_include=False, shade_mask=True, brightness_norm=True):
 
-def manage_datasets(import_data, category='aspen', weighting=False):
     # Import extraction csv
     data_set = pd.read_csv(import_data)
 
@@ -70,6 +80,7 @@ def manage_datasets(import_data, category='aspen', weighting=False):
     xy = np.array(data_set[['X_UTM', 'Y_UTM']])
     shade = np.array(data_set['hade_B_1']).flatten()
     tch = np.array(data_set['h_me_B_1']).flatten()
+    wtrl = np.array(data_set['wtrl_B_1']).flatten()
 
     # extract reflectance data from csv
     refl = np.array(data_set)[:, -427:-1].astype(np.float32)
@@ -87,18 +98,23 @@ def manage_datasets(import_data, category='aspen', weighting=False):
     refl[:, bad_bands_refl] = np.nan
     refl = refl[:, np.all(np.isnan(refl) == False, axis=0)]
 
+    # indexing good pixels for inclusion
     good_data = np.ones(len(xy)).astype(bool)
-    good_data[shade == 0] = False
+    if shade_mask:
+        good_data[shade == 0] = False
     good_data = good_data.flatten()
     # if there are any nans in the entire row, remove that pixel
     good_data[np.any(np.isnan(refl), axis=1)] = False
     good_data[np.all(refl == 0, axis=1)] = False
 
+    # Keep only data from good pixels
     refl = refl[good_data, ...]
     covertype = covertype[good_data, ...]
     xy = xy[good_data, :]
     tch = tch[good_data]
+    wtrl = wtrl[good_data]
     tch = tch.reshape((-1,1))
+    wtrl = wtrl.reshape((-1,1))
 
     if category is not None:
         Y = np.zeros((len(covertype),2)).astype(bool)
@@ -137,7 +153,6 @@ def manage_datasets(import_data, category='aspen', weighting=False):
     print('Fraction Training Data: {}'.format((np.sum(train) / float(len(train)))))
     print('Fraction Testing Data: {}'.format((np.sum(test) / float(len(train)))))
 
-
     for cover in np.unique(covertype):
         fraction = 100*np.sum(covertype[train] == cover) / len(covertype[train])
         print(f'% Training data is {cover}: {fraction}')
@@ -145,58 +160,52 @@ def manage_datasets(import_data, category='aspen', weighting=False):
         fraction = 100*np.sum(covertype[test] == cover) / len(covertype[test])
         print(f'% Testing data is {cover}: {fraction}')
 
-    #initialize weights vector and set to one for use in case where weighting == False
+    # initialize weights vector and set to one for use in case where weighting == False
     weights = np.ones(Y.shape[0])
-
-
-    standardized_count = len(covertype[train]) / float(len(y_labels))
-    for _cover, cover in enumerate(y_labels):
-        w = standardized_count / np.sum(covertype[train] == cover) 
-        weights[cover == covertype] = w
-        print(f'cover: {cover}, weight: {w}')
-
-    # If weighting is needed or desired, adapt code here
-    if weighting == True:
-        weights = np.zeros(Y.shape[0])
-        needles_w = float(len(Y[train]))/float(np.sum(Y == 1))**0.8
-        noneedles_w = float(len(Y[train]))/float(np.sum(Y == 0))**0.8
-        print('needles_weight: {}'.format(needles_w/(needles_w+noneedles_w)))
-        print('noneedles_weight: {}'.format(noneedles_w/(needles_w+noneedles_w)))
-        weights[Y.flatten() == 1] = needles_w / (needles_w+noneedles_w) * 100
-        weights[Y.flatten() == 0] = noneedles_w / (needles_w+noneedles_w) * 100
+    if weighting:
+        standardized_count = len(covertype[train]) / float(len(y_labels))
+        for _cover, cover in enumerate(y_labels):
+            w = standardized_count / np.sum(covertype[train] == cover)
+            weights[cover == covertype] = w
+            print(f'cover: {cover}, weight: {w}')
 
     # brightness normalize
-    brightness = np.sqrt(np.mean(np.power(refl, 2), axis=-1))
-    refl = refl / brightness[:, np.newaxis]
-    refl = np.append(refl,tch,axis=-1)
+    if brightness_norm:
+        brightness = np.sqrt(np.mean(np.power(refl, 2), axis=-1))
+        refl = refl / brightness[:, np.newaxis]
+    if wtrl_include:
+        refl = np.append(refl, wtrl, axis=-1)
+    if tch_include:
+        refl = np.append(refl, tch, axis=-1)
 
     # Scale brightness normalized reflectance data and save scaling information
-    #scaler = preprocessing.StandardScaler()
-    #scaler.fit(refl[train, :])
-    #refl = scaler.transform(refl)
-    #joblib.dump(scaler, 'output/trained_models/nn_aspen_scaler')
+    if scaling:
+        scaler = preprocessing.StandardScaler()
+        scaler.fit(refl[train, :])
+        refl = scaler.transform(refl)
+        joblib.dump(scaler, 'output/trained_models/nn_cover_scaler_' + run_name + '.pkl')
 
     # Return outputs of function
     return refl, Y, test, train, weights, covertype, y_labels
 
 
-    # Create NN model structure, and compile.  Ultimate structure desided after pretty
-    # extensive (heuristically guided) testing
+# Create NN model structure, and compile.  Ultimate structure desided after pretty
+# extensive (heuristically guided) testing
 def nn_model(refl, num_layers, num_nodes, classes, dropout, loss_function, output_activation):
     inlayer = keras.layers.Input(shape=(refl.shape[1],))
     output_layer = inlayer
 
-  # defining internal layer structure
+    # defining internal layer structure
     for n in range(num_layers):
         output_layer = Dense(units=num_nodes)(output_layer)
 
         # Activation: makes it non-linear, remove line for nested linear models. many options here.
         output_layer = keras.layers.LeakyReLU(alpha=0.3)(output_layer)
 
-        #Regularization term: Removes nodes that are underutilized - more likely to need adjustment than leaky
+        # Regularization term: Removes nodes that are underutilized - more likely to need adjustment than leaky
         output_layer = Dropout(dropout)(output_layer)
 
-        #Normalization: amplifys signal by normalizing finite differences to look larger. consider turning this off
+        # Normalization: amplifys signal by normalizing finite differences to look larger. consider turning this off
         output_layer = BatchNormalization()(output_layer)
 
     # Activation for output layer defined here: sigmoid forces the results to look more binary. Could also be linear.
@@ -205,13 +214,14 @@ def nn_model(refl, num_layers, num_nodes, classes, dropout, loss_function, outpu
     # Initializing the model structure
     model = keras.models.Model(inputs=[inlayer], outputs=[output_layer])
 
-  # Optimization function and loss functions defined here - leave as is for now
+    # Optimization function and loss functions defined here - leave as is for now
     model.compile(loss=loss_function, optimizer='adam') # change loss function to categorical_crossentropy
 
     return model
 
 
-def nn_scenario_test(output_filename, refl, Y, weights, test, train, y_labels, covertype, layers_range=[4], node_range=[400], classes=2, dropout_range=[0.4],
+def nn_scenario_test(output_filename, refl, Y, weights, test, train, y_labels, covertype, run_name,
+                     layers_range=[4], node_range=[400], classes=2, dropout_range=[0.4],
                      loss_function='categorical_crossentropy', output_activation='sigmoid', n_epochs=5, its=20):
 
     predictions = np.zeros((len(layers_range), len(dropout_range), len(node_range), len(range(its)), len(Y))).astype(np.float32)
@@ -240,7 +250,7 @@ def nn_scenario_test(output_filename, refl, Y, weights, test, train, y_labels, c
                     predictions[_nl, _dr, _nn, _i, :] = pred
 
                     np.savez(output_filename, predictions=predictions, dim_names=dim_names)
-                    model.save(f'trained_models/cover_model_nl_{nl}_dr_{dr}_nn_{nn}_it_{_i}.h5')
+                    model.save(f'output/trained_models/cover_model{run_name}_nl_{nl}_dr_{dr}_nn_{nn}_it_{_i}.h5')
 
                 for cover in y_labels:
                     plotting_model_fits_singleclass(output_filename, test, covertype, layers_range, node_range, dropout_range,
@@ -279,7 +289,6 @@ def plotting_model_fits(output_filename, to_plot, covertype, layers_range, node_
         # all these are being done over the entire 5-D array and result in 4-D arrays for each
 
         # defining where cover is equal to this class and where this class is predicted as aspen.
-        #### NOT SURE ABOUT INDEXING HERE NOW THAT IT"S MULTICLASS
         true_positives = np.nansum(np.logical_and(predictions == cover_Y, cover_Y == _c), axis=-1)
 
         # prediction is aspen, actual is not this cover type - only useful for aspen
@@ -417,7 +426,7 @@ def plotting_model_fits_singleclass(output_filename, to_plot, covertype, layers_
                 plt.ylim([-0.05, 1.05])
 
     baseout = os.path.splitext(os.path.basename(output_filename))[0]
-    plotname = f'figs/multiclass/{baseout}_{matchcover}_class_breakout_5.png'
+    plotname = f'figs/multiclass/{baseout}_{matchcover}_class_breakout.png'
     print(f'Saving {plotname}')
     plt.savefig(plotname, dpi=200, bbox_inches='tight')
     plt.clf()
